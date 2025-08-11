@@ -79,7 +79,10 @@ def process_pdf(pdf_file, prompt):
     num_pages = len(images)
 
     raw_response = response.choices[0].message.content
+
+    print(raw_response)
     # Clean markdown code blocks
+    
     cleaned_response = raw_response
     if raw_response.startswith("```json") and raw_response.endswith("```"):
         cleaned_response = raw_response[7:-3].strip()
