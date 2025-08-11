@@ -84,6 +84,7 @@ def process_pdf(pdf_file, prompt):
     # Clean markdown code blocks
     
     cleaned_response = raw_response
+    '''
     if raw_response.startswith("```json") and raw_response.endswith("```"):
         cleaned_response = raw_response[7:-3].strip()
     elif raw_response.startswith("```") and raw_response.endswith("```"):
@@ -93,7 +94,8 @@ def process_pdf(pdf_file, prompt):
     page_contents = json.loads(cleaned_response)
 
     logger.debug(page_contents)
-    return {"extracted_text": page_contents}
+    '''
+    return {"extracted_text": raw_response}
 
 
 # --- Gradio Interface ---
