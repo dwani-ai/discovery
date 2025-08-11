@@ -1,3 +1,4 @@
 gradio
 pdf2image
 openai
+vllm

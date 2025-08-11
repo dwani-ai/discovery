@@ -1,6 +1,6 @@
 import gradio as gr
 import logging
-from PIL import Image
+
 from openai import OpenAI
 
 # Set up logging
