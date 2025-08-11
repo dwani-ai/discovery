@@ -81,17 +81,17 @@ def process_pdf(pdf_file, page_number, prompt):
     # Change 'your_pdf_file.pdf' to the path of your PDF
     images = convert_from_path(file_path)
 
-    # Save each page as an image
     for i, image in enumerate(images):
         #image.save(f'page_{i + 1}.jpg', 'JPEG')
+        image_bytes_io = BytesIO()
+        image.save(image_bytes_io, format='JPEG')
+        #image_bytes = image_bytes_io.getvalue()
 
-
-        image_bytes = image.read()
-        image = BytesIO(image_bytes)
-        img_base64 = encode_image(image)
+        image_bytes_io.seek(0)  # Reset cursor to start if needed
+        img_base64 = encode_image(image_bytes_io)
         text = ocr_page_with_rolm(img_base64, model="gemma3")
-        print(text)
-        #return {"extracted_text": text}
+        logger.debug(text)
+        return {"extracted_text": text}
 
 
 # --- Gradio Interface ---

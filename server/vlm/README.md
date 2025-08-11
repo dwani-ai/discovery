@@ -8,7 +8,7 @@ pip install vllm
 
 for PC
 
-- vllm serve HuggingFaceTB/SmolVLM-256M-Instruct --gpu-memory-utilization 0.4
+- vllm serve HuggingFaceTB/SmolVLM-256M-Instruct --gpu-memory-utilization 0.4 --served-model-name gemma3 --host 0.0.0.0 --port 9000
 
 
 for Server
