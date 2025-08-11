@@ -145,7 +145,7 @@ with gr.Blocks(title="dwani.ai - Discovery", css=css, fill_width=True) as demo:
 # Launch the interface
 if __name__ == "__main__":
     try:
-        demo.launch(server_name="0.0.0.0", server_port=8000)
+        demo.launch(server_name="0.0.0.0", server_port=80)
     except Exception as e:
         logger.error(f"Failed to launch Gradio interface: {str(e)}")
         print(f"Failed to launch Gradio interface: {str(e)}")
