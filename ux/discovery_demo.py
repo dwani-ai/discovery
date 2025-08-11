@@ -14,6 +14,9 @@ from io import BytesIO
 
 from pdf2image import convert_from_path
 
+
+import os
+vlm_base_url = os.getenv('VLLM_IP')
 def encode_image(image: BytesIO) -> str:
     """Encode image bytes to base64 string."""
     return base64.b64encode(image.read()).decode("utf-8")
@@ -31,7 +34,7 @@ def get_openai_client(model: str) -> OpenAI:
         "moondream": "7882",
         "qwen2.5vl": "7883",
     }
-    base_url = f"http://0.0.0.0:{model_ports[model]}/v1"
+    base_url = f"http://{vlm_base_url}:{model_ports[model]}/v1"
 
     return OpenAI(api_key="http", base_url=base_url)
 
