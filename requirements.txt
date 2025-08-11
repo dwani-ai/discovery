@@ -1,2 +1,3 @@
 dwani
 gradio
+pdf2image
