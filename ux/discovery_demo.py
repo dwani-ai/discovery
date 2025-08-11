@@ -1,34 +1,15 @@
 import gradio as gr
-import requests
-import dwani
-import os
-import tempfile
 import logging
 from PIL import Image
-import urllib.parse
-import json
-import time
-import uuid
 from openai import OpenAI
 
 # Set up logging
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-# Configure dwani API settings
-dwani.api_key = os.getenv("DWANI_API_KEY")
-dwani.api_base = os.getenv("DWANI_API_BASE_URL")
-
-
-# Validate API configuration
-if not dwani.api_key or not dwani.api_base:
-    logger.error("API key or base URL not set. Please set DWANI_API_KEY and DWANI_API_BASE_URL environment variables.")
-    raise ValueError("Please set DWANI_API_KEY and DWANI_API_BASE_URL environment variables.")
-
 from openai import OpenAI
 
 import base64
-import json
 from io import BytesIO
 
 from pdf2image import convert_from_path
@@ -78,7 +59,7 @@ def ocr_page_with_rolm(img_base64: str, model: str) -> str:
         )
         return response.choices[0].message.content
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"OCR processing failed: {str(e)}")
+        raise Exception(status_code=500, detail=f"OCR processing failed: {str(e)}")
     
 
 
@@ -102,160 +83,16 @@ def process_pdf(pdf_file, page_number, prompt):
 
     # Save each page as an image
     for i, image in enumerate(images):
-        image.save(f'page_{i + 1}.jpg', 'JPEG')
+        #image.save(f'page_{i + 1}.jpg', 'JPEG')
 
 
-            image_bytes = await file.read()
+        image_bytes = image.read()
         image = BytesIO(image_bytes)
         img_base64 = encode_image(image)
         text = ocr_page_with_rolm(img_base64, model="gemma3")
-        return {"extracted_text": text}
+        print(text)
+        #return {"extracted_text": text}
 
-
-
-    '''
-    try:
-        result = dwani.Documents.query_all(
-            file_path, model="gemma3", prompt=prompt
-        )
-        return {
-            "Original Text": result.get("original_text", "N/A"),
-            "Response": result.get("query_answer", "N/A"),
-            "Translated Response": result.get("translated_query_answer", "N/A")
-        }
-    except Exception as e:
-        return {"error": f"PDF API error: {str(e)}"}
-    '''
-
-
-# --- Chatbot from File 2 ---
-# Initialize OpenAI client for Chatbot
-gemma_base_url = os.getenv('GEMMA_VLLM_IP', 'http://localhost:9000/v1')
-api_key = os.getenv('OPENAI_API_KEY', 'your-api-key')
-client = OpenAI(api_key=api_key, base_url=gemma_base_url)
-
-# Configuration for Chatbot
-DEFAULT_SYS_PROMPT = "You are a helpful and harmless assistant. Respond concisely but meaningfully to short inputs, and provide detailed answers when appropriate."
-DEFAULT_MODEL = "gemma3"
-MODEL_OPTIONS = [{"label": "Gemma3", "value": "gemma3"}]
-MODEL_OPTIONS_MAP = {model["value"]: model for model in MODEL_OPTIONS}
-DEFAULT_SETTINGS = {"model": DEFAULT_MODEL, "sys_prompt": DEFAULT_SYS_PROMPT}
-
-def format_history(history, sys_prompt):
-    messages = [{"role": "system", "content": sys_prompt}] + history
-    return messages
-
-class Gradio_Events:
-    @staticmethod
-    def submit(state_value, user_input, model_value, sys_prompt_value):
-        conversation_id = state_value["conversation_id"]
-        history = state_value["conversation_contexts"][conversation_id]["history"]
-        settings = {"model": model_value, "sys_prompt": sys_prompt_value}
-        state_value["conversation_contexts"][conversation_id]["settings"] = settings
-
-        history.append({"role": "user", "content": user_input})
-        messages = format_history(history, sys_prompt_value)
-
-        try:
-            response = client.chat.completions.create(
-                model=model_value,
-                messages=messages,
-                stream=False
-            )
-            start_time = time.time()
-            answer_content = response.choices[0].message.content
-            history.append({"role": "assistant", "content": f"{answer_content}\n\n*Generated in {time.time() - start_time:.2f}s*"})
-        except Exception as e:
-            history.append({"role": "assistant", "content": f"Error: {str(e)}"})
-
-        return (
-            gr.update(value=history),
-            gr.update(value=state_value),
-            gr.update(interactive=True),
-            gr.update(interactive=True),
-            gr.update(interactive=True),
-            gr.update(choices=[(c["label"], c["key"]) for c in state_value["conversations"]], 
-                     visible=bool(state_value["conversations"]), 
-                     value=state_value["conversation_id"])
-        )
-
-    @staticmethod
-    def add_message(user_input, model_value, sys_prompt_value, state_value):
-        if not user_input.strip():
-            return (
-                gr.skip(),
-                state_value,
-                user_input,
-                gr.skip(),
-                gr.skip(),
-                gr.update(choices=[(c["label"], c["key"]) for c in state_value["conversations"]], 
-                         visible=bool(state_value["conversations"]), 
-                         value=state_value["conversation_id"])
-            )
-
-        if not state_value["conversation_id"]:
-            random_id = str(uuid.uuid4())
-            state_value["conversation_id"] = random_id
-            state_value["conversation_contexts"][random_id] = {
-                "history": [],
-                "settings": {"model": model_value, "sys_prompt": sys_prompt_value}
-            }
-            state_value["conversations"].append({
-                "label": user_input[:30] + "..." if len(user_input) > 30 else user_input,
-                "key": random_id
-            })
-
-        return Gradio_Events.submit(state_value, user_input, model_value, sys_prompt_value)
-
-    @staticmethod
-    def new_chat(state_value):
-        state_value["conversation_id"] = ""
-        return (
-            gr.update(value=[]),
-            gr.update(value=state_value),
-            gr.update(value=DEFAULT_SETTINGS["model"]),
-            gr.update(value=DEFAULT_SETTINGS["sys_prompt"]),
-            gr.update(choices=[], visible=False)
-        )
-
-    @staticmethod
-    def select_conversation(state_value, evt: gr.EventData):
-        conversation_id = evt._data
-        if conversation_id not in state_value["conversation_contexts"]:
-            return gr.skip(), gr.skip(), gr.skip(), gr.skip()
-        state_value["conversation_id"] = conversation_id
-        history = state_value["conversation_contexts"][conversation_id]["history"]
-        settings = state_value["conversation_contexts"][conversation_id]["settings"]
-        return (
-            gr.update(value=history),
-            gr.update(value=state_value),
-            gr.update(value=settings["model"]),
-            gr.update(value=settings["sys_prompt"])
-        )
-
-    @staticmethod
-    def delete_conversation(state_value, evt: gr.EventData):
-        conversation_id = evt._data
-        if conversation_id in state_value["conversation_contexts"]:
-            del state_value["conversation_contexts"][conversation_id]
-            state_value["conversations"] = [c for c in state_value["conversations"] if c["key"] != conversation_id]
-            if state_value["conversation_id"] == conversation_id:
-                state_value["conversation_id"] = ""
-                return (
-                    gr.update(value=[]),
-                    gr.update(value=state_value),
-                    gr.update(choices=[], visible=False)
-                )
-        return gr.skip(), gr.update(value=state_value), gr.update(choices=[(c["label"], c["key"]) for c in state_value["conversations"]], 
-                                                                visible=bool(state_value["conversations"]), 
-                                                                value=state_value["conversation_id"])
-
-    @staticmethod
-    def clear_conversation(state_value):
-        if state_value["conversation_id"]:
-            state_value["conversation_contexts"][state_value["conversation_id"]]["history"] = []
-            return gr.update(value=[]), gr.update(value=state_value)
-        return gr.skip(), gr.skip()
 
 # --- Gradio Interface ---
 css = """
