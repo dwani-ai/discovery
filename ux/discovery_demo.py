@@ -16,7 +16,7 @@ from pdf2image import convert_from_path
 
 
 import os
-vlm_base_url = os.getenv('VLLM_IP')
+vlm_base_url = os.getenv('VLLM_IP', "0.0.0.0")
 def encode_image(image: BytesIO) -> str:
     """Encode image bytes to base64 string."""
     return base64.b64encode(image.read()).decode("utf-8")
@@ -145,7 +145,7 @@ with gr.Blocks(title="dwani.ai - Discovery", css=css, fill_width=True) as demo:
 # Launch the interface
 if __name__ == "__main__":
     try:
-        demo.launch(server_name="0.0.0.0", server_port=80)
+        demo.launch(server_name="0.0.0.0", server_port=8000)
     except Exception as e:
         logger.error(f"Failed to launch Gradio interface: {str(e)}")
         print(f"Failed to launch Gradio interface: {str(e)}")
