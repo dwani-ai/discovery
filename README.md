@@ -1,5 +1,21 @@
 ## Discovery - Document Analytics
 
+- Setup
+```bash
+sudo apt-get install poppler-utils
 
-Gemma3-4B-it-fp8 with vllm
-gpt-oss-20b with llama.cpp
+python3.10 -m venv venv
+source venv/bin/activate
+
+pip install -r requirements.txt
+```
+
+- Server
+```bash
+vllm serve HuggingFaceTB/SmolVLM-256M-Instruct --gpu-memory-utilization 0.4 --served-model-name gemma3 --host 0.0.0.0 --port 9000 --disable-log-requests
+```
+- Client
+
+```bash
+python ux/discovery_demo.py
+```
