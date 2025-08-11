@@ -25,3 +25,8 @@ gpt-oss-20b with llama.cpp
 --
 
 https://moondream.ai/c/docs/advanced/transformers
+
+
+- arm64
+
+pip install torch==2.8.0 torchaudio==2.8.0 torchvision --index-url https://download.pytorch.org/whl/cu128
