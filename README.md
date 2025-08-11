@@ -28,3 +28,13 @@
     ```bash
     python ux/discovery_demo.py
     ```
+
+
+<!-- 
+
+docker build -t dwani/discovery_ux:latest -f client.Dockerfile .
+docker push dwani/discovery_ux:latest
+
+docker run -p 80:80 --env DWANI_API_KEY=<your_key> --env DWANI_API_BASE_URL=<your_url>  --env GPT_OSS_API_URL=<gpt_url> --env GEMMA_VLLM_IP=<gemma_ip> dwani/workshop:latest
+
+-->

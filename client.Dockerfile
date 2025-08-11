@@ -17,8 +17,8 @@ RUN apk add --no-cache \
     libpng-dev poppler-utils
 
 # Install Python dependencies
-COPY requirements.txt .
-RUN pip install --no-cache-dir --user -r requirements.txt
+COPY client-requirements.txt .
+RUN pip install --no-cache-dir --user -r client-requirements.txt
 
 # Stage 2: Final stage
 FROM python:3.10-alpine
