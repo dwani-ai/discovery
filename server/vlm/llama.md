@@ -8,6 +8,10 @@
     --hf-file mmproj-BF16.gguf
 
 
+./build/bin/llama-server     --hf-repo unsloth/gemma-3-4b-it-GGUF     --hf-file gemma-3-4b-it-Q4_K_M.gguf --port 9500 --host 0.0.0.0
+
+./build/bin/llama-server     --hf-repo ggml-org/gemma-3-12b-it-GGUF
+
 llama.cpp for gpt-oss models from OpenAI
 
 
