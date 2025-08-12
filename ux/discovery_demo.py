@@ -83,7 +83,30 @@ def process_pdf(pdf_file, prompt):
     print(raw_response)
     # Clean markdown code blocks
     
-    cleaned_response = raw_response
+    cleaned_response = prompt + " - " +  raw_response
+
+
+
+    dwani_prompt = f"You are a helpful assistant"
+
+    client = get_openai_client(model)
+    response = client.chat.completions.create(
+        model=model,
+        messages=[
+            {
+                "role": "system",
+            #    "content": [{"type": "text", "text": f"You are Dwani, a helpful assistant. Answer questions considering India as base country and Karnataka as base state. Provide a concise response in one sentence maximum. If the answer contains numerical digits, convert the digits into words. If user asks the time, then return answer as {current_time}"}]
+                "content": [{"type": "text", "text": dwani_prompt }]
+            
+            },
+            {"role": "user", "content": [{"type": "text", "text": cleaned_response}]}
+        ],
+        temperature=0.3,
+        max_tokens=8000
+    )
+    generated_response = response.choices[0].message.content
+    logger.debug(f"Generated response: {generated_response}")
+
     '''
     if raw_response.startswith("```json") and raw_response.endswith("```"):
         cleaned_response = raw_response[7:-3].strip()
@@ -95,7 +118,7 @@ def process_pdf(pdf_file, prompt):
 
     logger.debug(page_contents)
     '''
-    return {"extracted_text": raw_response}
+    return {"extracted_text": generated_response}
 
 
 # --- Gradio Interface ---
