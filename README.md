@@ -17,6 +17,9 @@
     pip install -r server-requirements.txt
     ```
 
+    for x86
+        - pip install https://github.com/dwani-ai/vllm-arm64/releases/download/v0.0.0.8/vllm-0.10.1.dev603+ga01e0018b.d20250813-cp312-cp312-linux_x86_64.whl
+
 - Run 
 
     - Server
