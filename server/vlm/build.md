@@ -2,8 +2,7 @@
 sudo apt update
 sudo apt upgrade -y
 
-sudo apt-get install libssl-dev libcurl4-openssl-dev
-sudo apt install python3.12 python3.12-venv python3.12-dev -y
+sudo apt-get install libssl-dev libcurl4-openssl-dev python3.12 python3.12-venv python3.12-dev -y
 
 
 wget https://github.com/Kitware/CMake/releases/download/v4.1.0/cmake-4.1.0.tar.gz
