@@ -14,11 +14,11 @@ RUN apk add --no-cache \
     curl \
     libjpeg-turbo-dev \
     zlib-dev \
-    libpng-dev
+    libpng-dev poppler-utils
 
 # Install Python dependencies
-COPY requirements.txt .
-RUN pip install --no-cache-dir --user -r requirements.txt
+COPY client-requirements.txt .
+RUN pip install --no-cache-dir --user -r client-requirements.txt
 
 # Stage 2: Final stage
 FROM python:3.10-alpine
@@ -33,7 +33,7 @@ ENV PYTHONUNBUFFERED=1
 RUN apk add --no-cache \
     libjpeg-turbo \
     zlib \
-    libpng \
+    libpng poppler-utils\
     && rm -rf /var/cache/apk/*
 
 # Copy installed Python dependencies from builder stage
@@ -51,4 +51,4 @@ USER appuser
 EXPOSE 80
 
 # Command to run the Gradio program
-CMD ["python", "workshop_demo.py"]
+CMD ["python", "ux/discovery_demo.py"]

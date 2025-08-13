@@ -1,19 +1,17 @@
 import gradio as gr
 import logging
-
+import json
 from openai import OpenAI
+import base64
+from io import BytesIO
+from pdf2image import convert_from_path
+import os
 
 # Set up logging
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-from openai import OpenAI
-
-import base64
-from io import BytesIO
-
-from pdf2image import convert_from_path
-
+vlm_base_url = os.getenv('VLLM_IP', "0.0.0.0")
 def encode_image(image: BytesIO) -> str:
     """Encode image bytes to base64 string."""
     return base64.b64encode(image.read()).decode("utf-8")
@@ -31,67 +29,96 @@ def get_openai_client(model: str) -> OpenAI:
         "moondream": "7882",
         "qwen2.5vl": "7883",
     }
-    base_url = f"http://0.0.0.0:{model_ports[model]}/v1"
+    base_url = f"http://{vlm_base_url}:{model_ports[model]}/v1"
 
     return OpenAI(api_key="http", base_url=base_url)
 
-
-def ocr_page_with_rolm(img_base64: str, model: str) -> str:
-    """Perform OCR on the provided base64 image using the specified model."""
-    try:
-        client = get_openai_client(model)
-        response = client.chat.completions.create(
-            model=model,
-            messages=[
-                {
-                    "role": "user",
-                    "content": [
-                        {
-                            "type": "image_url",
-                            "image_url": {"url": f"data:image/png;base64,{img_base64}"}
-                        },
-                        {"type": "text", "text": "Return the plain text extracted from this image."}
-                    ]
-                }
-            ],
-            temperature=0.2,
-            max_tokens=4096
-        )
-        return response.choices[0].message.content
-    except Exception as e:
-        raise Exception(status_code=500, detail=f"OCR processing failed: {str(e)}")
-    
-
-
 # --- PDF Processing Module ---
-def process_pdf(pdf_file, page_number, prompt):
+def process_pdf(pdf_file, prompt):
     if not pdf_file:
         return {"error": "Please upload a PDF file"}
     if not prompt.strip():
         return {"error": "Please provide a non-empty prompt"}
-    try:
-        page_number = int(page_number)
-        if page_number < 1:
-            raise ValueError("Page number must be at least 1")
-    except (ValueError, TypeError):
-        return {"error": "Page number must be a positive integer"}
-    file_path = pdf_file.name if hasattr(pdf_file, 'name') else pdf_file
 
+    file_path = pdf_file.name if hasattr(pdf_file, 'name') else pdf_file
 
     # Change 'your_pdf_file.pdf' to the path of your PDF
     images = convert_from_path(file_path)
+    num_pages = len(images)
+    messages = []
 
     for i, image in enumerate(images):
-        #image.save(f'page_{i + 1}.jpg', 'JPEG')
         image_bytes_io = BytesIO()
         image.save(image_bytes_io, format='JPEG')
-        #image_bytes = image_bytes_io.getvalue()
 
         image_bytes_io.seek(0)  # Reset cursor to start if needed
-        img_base64 = encode_image(image_bytes_io)
-        text = ocr_page_with_rolm(img_base64, model="gemma3")
-        logger.debug(text)
-        return {"extracted_text": text}
+        image_base64 = encode_image(image_bytes_io)
+        messages.append({
+                    "type": "image_url",
+                    "image_url": {"url": f"data:image/png;base64,{image_base64}"}
+        })
+        
+    messages.append({
+            "type": "text",
+            "text": (
+                f"Extract plain text from these {num_pages} PDF pages. "
+                "Return the results as a valid JSON object where keys are page numbers (starting from 0) "
+                "and values are the extracted text for each page. Ensure the response is strictly JSON-formatted "
+                "and does not include markdown code blocks or any text outside the JSON object."
+            )
+        })
+
+    model = "gemma3"    
+    client = get_openai_client(model)
+    response = client.chat.completions.create(
+        model=model,
+        messages=[{"role": "user", "content": messages}],
+        temperature=0.2,
+        max_tokens=8000
+    )
+    num_pages = len(images)
+
+    raw_response = response.choices[0].message.content
+
+    print(raw_response)
+    # Clean markdown code blocks
+    
+    cleaned_response = prompt + " - " +  raw_response
+
+
+
+    dwani_prompt = f"You are a helpful assistant"
+
+    client = get_openai_client(model)
+    response = client.chat.completions.create(
+        model=model,
+        messages=[
+            {
+                "role": "system",
+            #    "content": [{"type": "text", "text": f"You are Dwani, a helpful assistant. Answer questions considering India as base country and Karnataka as base state. Provide a concise response in one sentence maximum. If the answer contains numerical digits, convert the digits into words. If user asks the time, then return answer as {current_time}"}]
+                "content": [{"type": "text", "text": dwani_prompt }]
+            
+            },
+            {"role": "user", "content": [{"type": "text", "text": cleaned_response}]}
+        ],
+        temperature=0.3,
+        max_tokens=8000
+    )
+    generated_response = response.choices[0].message.content
+    logger.debug(f"Generated response: {generated_response}")
+
+    '''
+    if raw_response.startswith("```json") and raw_response.endswith("```"):
+        cleaned_response = raw_response[7:-3].strip()
+    elif raw_response.startswith("```") and raw_response.endswith("```"):
+        cleaned_response = raw_response[3:-3].strip()
+    
+ 
+    page_contents = json.loads(cleaned_response)
+
+    logger.debug(page_contents)
+    '''
+    return {"extracted_text": generated_response}
 
 
 # --- Gradio Interface ---
@@ -123,7 +150,6 @@ with gr.Blocks(title="dwani.ai - Discovery", css=css, fill_width=True) as demo:
             with gr.Row():
                 with gr.Column():
                     pdf_input = gr.File(label="Upload PDF", file_types=[".pdf"])
-                    pdf_page = gr.Number(label="Page Number", value=1, minimum=1, precision=0)
                     pdf_prompt = gr.Textbox(
                         label="Custom Prompt",
                         placeholder="e.g., List the key points",
@@ -135,7 +161,7 @@ with gr.Blocks(title="dwani.ai - Discovery", css=css, fill_width=True) as demo:
                     pdf_output = gr.JSON(label="PDF Response")
             pdf_submit.click(
                 fn=process_pdf,
-                inputs=[pdf_input, pdf_page, pdf_prompt],
+                inputs=[pdf_input,pdf_prompt],
                 outputs=pdf_output
             )
 
