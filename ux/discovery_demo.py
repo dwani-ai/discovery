@@ -116,7 +116,7 @@ def process_pdf(pdf_file, prompt):
 
     logger.debug(page_contents)
     '''
-    return {"extracted_text": generated_response}
+    return {"extracted_text": raw_response, "query_answer": generated_response}
 
 
 # --- Gradio Interface ---

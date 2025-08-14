@@ -16,16 +16,14 @@
     ```
     pip install -r server-requirements.txt
     ```
-
+<!-- 
     for x86
         - pip install https://github.com/dwani-ai/vllm-arm64/releases/download/v0.0.0.8/vllm-0.10.1.dev603+ga01e0018b.d20250813-cp312-cp312-linux_x86_64.whl
-
+-->
 - Run 
 
     - Server
-    ```bash
-    vllm serve HuggingFaceTB/SmolVLM-256M-Instruct --gpu-memory-utilization 0.4 --served-model-name gemma3 --host 0.0.0.0 --port 9000 --disable-log-requests
-    ```
+        - Follow Steps in [server/vlm/README.md](server/vlm/README.md)
     - Client
 
     ```bash
