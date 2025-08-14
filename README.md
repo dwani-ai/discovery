@@ -62,5 +62,7 @@ docker push dwani/discovery_server:latest
 
 docker run -p 18888:18888 --env VLLM_IP=$VLLM_IP dwani/discovery_server:latest
 
+-- arm64 - on GH200
+
 
 -->
