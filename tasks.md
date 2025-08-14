@@ -1,3 +1,13 @@
+TODO
+
+- Add : Flashinger and xformers for arm64
+
+WARNING 08-14 11:30:38 [topk_topp_sampler.py:59] FlashInfer is not available. Falling back to the PyTorch-native implementation of top-p & top-k sampling. For the best performance, please install FlashInfer.
+
+WARNING 08-14 11:30:38 [layer.py:51] Xformers is not available, falling back.
+
+
+
 Build a Document Graph 
 
 Complete text 
