@@ -52,6 +52,6 @@
 docker build -t dwani/discovery_ux:latest -f client.Dockerfile .
 docker push dwani/discovery_ux:latest
 
-docker run -p 80:8000 --env VLLM_IP=<gemma_ip> dwani/discovery_ux:latest
+docker run -p 80:8000 --env VLLM_IP=$VLLM_IP dwani/discovery_ux:latest
 
 -->

@@ -14,7 +14,7 @@ RUN apk add --no-cache \
     curl \
     libjpeg-turbo-dev \
     zlib-dev \
-    libpng-dev poppler-utils
+    libpng-dev
 
 # Install Python dependencies
 COPY client-requirements.txt .
@@ -33,7 +33,7 @@ ENV PYTHONUNBUFFERED=1
 RUN apk add --no-cache \
     libjpeg-turbo \
     zlib \
-    libpng poppler-utils\
+    libpng\
     && rm -rf /var/cache/apk/*
 
 # Copy installed Python dependencies from builder stage
@@ -51,4 +51,4 @@ USER appuser
 EXPOSE 80
 
 # Command to run the Gradio program
-CMD ["python", "ux/async_ux.py"]
+CMD ["python", "ux/ux.py"]
