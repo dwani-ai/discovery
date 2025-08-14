@@ -153,6 +153,65 @@ def process_pdf(pdf_file, prompt):
             skipped_pages.extend(range(batch_start, batch_end))
             continue  # Skip this batch but continue processing
 
+    # Retry skipped pages one by one
+    remaining_skipped = list(set(skipped_pages))  # Remove duplicates
+    successfully_processed = []
+    for page_idx in remaining_skipped:
+        try:
+            image = images[page_idx]
+            image_bytes_io = BytesIO()
+            image.save(image_bytes_io, format='JPEG', quality=85)
+            image_bytes_io.seek(0)
+            image_base64 = encode_image(image_bytes_io)
+            
+            single_message = [
+                {
+                    "type": "image_url",
+                    "image_url": {"url": f"data:image/jpeg;base64,{image_base64}"}
+                },
+                {
+                    "type": "text",
+                    "text": (
+                        f"Extract plain text from this single PDF page (page number {page_idx}). "
+                        "Return the result as a valid JSON object where the key is the page number "
+                        f"({page_idx}) and the value is the extracted text. "
+                        "Ensure the response is strictly JSON-formatted and does not include markdown code blocks "
+                        "or any text outside the JSON object."
+                    )
+                }
+            ]
+            
+            response = client.chat.completions.create(
+                model=model,
+                messages=[{"role": "user", "content": single_message}],
+                temperature=0.2,
+                max_tokens=25000
+            )
+            raw_response = response.choices[0].message.content
+            logger.debug(f"Raw response for skipped page {page_idx}: {raw_response}")
+
+            cleaned_response = clean_response(raw_response)
+            if not cleaned_response:
+                logger.warning(f"Empty response for skipped page {page_idx}")
+                continue
+
+            try:
+                page_result = json.loads(cleaned_response)
+                if not isinstance(page_result, dict) or str(page_idx) not in page_result:
+                    logger.warning(f"Invalid JSON for skipped page {page_idx}")
+                    continue
+                all_results.update(page_result)
+                successfully_processed.append(page_idx)
+            except json.JSONDecodeError as e:
+                logger.error(f"JSON parsing failed for skipped page {page_idx}: {str(e)}")
+                continue
+        except Exception as e:
+            logger.error(f"Failed to process skipped page {page_idx}: {str(e)}")
+            continue
+
+    # Update skipped_pages to remove successfully processed ones
+    skipped_pages = [p for p in skipped_pages if p not in successfully_processed]
+
     if not all_results and skipped_pages:
         return {"error": "No valid text extracted from any pages", "skipped_pages": skipped_pages}
 
@@ -172,16 +231,14 @@ def process_pdf(pdf_file, prompt):
 
     combined_prompt = f"{prompt} - Extracted text: {results_str}"
 
+    messages=[
+        {"role": "user", "content": [{"type": "text", "text": combined_prompt}]}
+    ]
+
     try:
         response = client.chat.completions.create(
             model=model,
-            messages=[
-                {
-                    "role": "system",
-                    "content": [{"type": "text", "text": dwani_prompt}]
-                },
-                {"role": "user", "content": [{"type": "text", "text": combined_prompt}]}
-            ],
+            messages=messages,
             temperature=0.3,
             max_tokens=25000
         )

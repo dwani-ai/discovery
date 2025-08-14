@@ -1,17 +1,21 @@
-import gradio as gr
 import logging
 import json
-from openai import AsyncOpenAI  # Changed to AsyncOpenAI for async support
+from fastapi import FastAPI, UploadFile, File, Form, HTTPException
+from fastapi.responses import JSONResponse
+from openai import AsyncOpenAI
 import base64
 from io import BytesIO
 from pdf2image import convert_from_path
 import os
 import asyncio
 import re
+from typing import List, Dict, Optional
 
 # Set up logging
 logging.basicConfig(level=logging.DEBUG)
 logger = logging.getLogger(__name__)
+
+app = FastAPI(title="Dwani PDF Processing API")
 
 vlm_base_url = os.getenv('VLLM_IP', "0.0.0.0")
 
@@ -19,7 +23,6 @@ def encode_image(image: BytesIO) -> str:
     """Encode image bytes to base64 string."""
     return base64.b64encode(image.read()).decode("utf-8")
 
-# Dynamic LLM client based on model (Async version)
 def get_openai_client(model: str) -> AsyncOpenAI:
     """Initialize AsyncOpenAI client with model-specific base URL."""
     valid_models = ["gemma3", "gpt-oss"]
@@ -31,18 +34,14 @@ def get_openai_client(model: str) -> AsyncOpenAI:
         "gpt-oss": "9500",
     }
     base_url = f"http://{vlm_base_url}:{model_ports[model]}/v1"
-
     return AsyncOpenAI(api_key="http", base_url=base_url)
 
-def clean_response(raw_response):
+def clean_response(raw_response: str) -> Optional[str]:
     """Clean markdown code blocks or other non-JSON content from the response."""
     if not raw_response:
         return None
-    # Remove markdown code blocks (e.g., ```json ... ``` or ``` ... ```)
     cleaned = re.sub(r'```(?:json)?\s*([\s\S]*?)\s*```', r'\1', raw_response)
-    # Remove leading/trailing whitespace
-    cleaned = cleaned.strip()
-    return cleaned
+    return cleaned.strip()
 
 async def process_single_batch(client, model, batch_messages, batch_start, batch_end):
     """Process a single batch of pages asynchronously."""
@@ -56,13 +55,11 @@ async def process_single_batch(client, model, batch_messages, batch_start, batch
         raw_response = response.choices[0].message.content
         logger.debug(f"Raw response for batch {batch_start}-{batch_end-1}: {raw_response}")
 
-        # Clean the response
         cleaned_response = clean_response(raw_response)
         if not cleaned_response:
             logger.warning(f"Empty response for batch {batch_start}-{batch_end-1}")
             return None, list(range(batch_start, batch_end))
 
-        # Parse JSON
         try:
             batch_results = json.loads(cleaned_response)
             if not isinstance(batch_results, dict):
@@ -71,7 +68,6 @@ async def process_single_batch(client, model, batch_messages, batch_start, batch
             return batch_results, []
         except json.JSONDecodeError as e:
             logger.error(f"JSON parsing failed for batch {batch_start}-{batch_end-1}: {str(e)}")
-            logger.debug(f"Cleaned response: {cleaned_response}")
             return None, list(range(batch_start, batch_end))
     except Exception as e:
         logger.error(f"API request failed for batch {batch_start}-{batch_end-1}: {str(e)}")
@@ -96,8 +92,7 @@ async def process_single_page(client, model, image, page_idx):
                     f"Extract plain text from this single PDF page (page number {page_idx}). "
                     "Return the result as a valid JSON object where the key is the page number "
                     f"({page_idx}) and the value is the extracted text. "
-                    "Ensure the response is strictly JSON-formatted and does not include markdown code blocks "
-                    "or any text outside the JSON object."
+                    "Ensure the response is strictly JSON-formatted and does not include markdown code blocks."
                 )
             }
         ]
@@ -129,25 +124,30 @@ async def process_single_page(client, model, image, page_idx):
         logger.error(f"Failed to process skipped page {page_idx}: {str(e)}")
         return None, page_idx
 
-async def process_pdf(pdf_file, prompt):
-    if not pdf_file:
-        return {"error": "Please upload a PDF file"}
+@app.post("/process_pdf")
+async def process_pdf_endpoint(file: UploadFile = File(...), prompt: str = Form(...)):
+    """Endpoint to process PDF and extract text based on prompt."""
+    if not file:
+        raise HTTPException(status_code=400, detail="Please upload a PDF file")
     if not prompt.strip():
-        return {"error": "Please provide a non-empty prompt"}
+        raise HTTPException(status_code=400, detail="Please provide a non-empty prompt")
 
-    file_path = pdf_file.name if hasattr(pdf_file, 'name') else pdf_file
-
-    # Convert PDF to images with error handling
+    # Save uploaded file temporarily
     try:
-        images = convert_from_path(file_path)
+        with open("temp.pdf", "wb") as f:
+            f.write(await file.read())
+        images = convert_from_path("temp.pdf")
     except Exception as e:
         logger.error(f"PDF conversion failed: {str(e)}")
-        return {"error": f"Failed to convert PDF to images: {str(e)}"}
+        raise HTTPException(status_code=500, detail=f"Failed to convert PDF to images: {str(e)}")
+    finally:
+        if os.path.exists("temp.pdf"):
+            os.remove("temp.pdf")
 
     num_pages = len(images)
     all_results = {}
     skipped_pages = []
-    batch_size = 5  # Keep reduced batch size
+    batch_size = 5
     model = "gemma3"
     client = get_openai_client(model)
 
@@ -158,7 +158,6 @@ async def process_pdf(pdf_file, prompt):
         batch_images = images[batch_start:batch_end]
         batch_messages = []
 
-        # Convert images to base64 for current batch
         for i, image in enumerate(batch_images, start=batch_start):
             try:
                 image_bytes_io = BytesIO()
@@ -179,26 +178,20 @@ async def process_pdf(pdf_file, prompt):
             skipped_pages.extend(range(batch_start, batch_end))
             continue
 
-        # Add text instruction for current batch
-        batch_page_count = batch_end - batch_start
         batch_messages.append({
             "type": "text",
             "text": (
-                f"Extract plain text from these {batch_page_count} PDF pages. "
+                f"Extract plain text from these {batch_end - batch_start} PDF pages. "
                 "Return the results as a valid JSON object where keys are page numbers "
                 f"(starting from {batch_start}) and values are the extracted text for each page. "
-                "Ensure the response is strictly JSON-formatted and does not include markdown code blocks "
-                "or any text outside the JSON object."
+                "Ensure the response is strictly JSON-formatted."
             )
         })
 
-        # Add batch task for async processing
         batch_tasks.append(process_single_batch(client, model, batch_messages, batch_start, batch_end))
 
-    # Run batch tasks concurrently
     batch_results = await asyncio.gather(*batch_tasks, return_exceptions=True)
 
-    # Process batch results
     for batch_result in batch_results:
         if isinstance(batch_result, Exception):
             logger.error(f"Batch processing failed: {str(batch_result)}")
@@ -209,13 +202,12 @@ async def process_pdf(pdf_file, prompt):
         if batch_skipped:
             skipped_pages.extend(batch_skipped)
 
-    # Retry skipped pages one by one asynchronously
+    # Retry skipped pages
     retry_tasks = []
-    remaining_skipped = list(set(skipped_pages))  # Remove duplicates
+    remaining_skipped = list(set(skipped_pages))
     for page_idx in remaining_skipped:
         retry_tasks.append(process_single_page(client, model, images[page_idx], page_idx))
 
-    # Run retry tasks concurrently
     retry_results = await asyncio.gather(*retry_tasks, return_exceptions=True)
     successfully_processed = []
 
@@ -228,36 +220,33 @@ async def process_pdf(pdf_file, prompt):
             all_results.update(page_result)
             successfully_processed.append(page_idx)
 
-    # Update skipped_pages to remove successfully processed ones
     skipped_pages = [p for p in skipped_pages if p not in successfully_processed]
 
     if not all_results and skipped_pages:
-        return {"error": "No valid text extracted from any pages", "skipped_pages": skipped_pages}
+        return JSONResponse(
+            content={"error": "No valid text extracted from any pages", "skipped_pages": skipped_pages},
+            status_code=400
+        )
 
-    # Process the combined results with the provided prompt
+    # Process with the provided prompt
     dwani_prompt = (
         "You are Dwani, a helpful assistant. Answer questions considering India as base country "
         "and Karnataka as base state. Provide a concise response in one sentence maximum. "
         "If the answer contains numerical digits, convert the digits into words."
     )
 
-    # Convert all_results to string for the second API call
     try:
         results_str = json.dumps(all_results)
     except Exception as e:
         logger.error(f"Failed to serialize all_results: {str(e)}")
-        return {"error": f"Failed to serialize extracted text: {str(e)}", "skipped_pages": skipped_pages}
+        raise HTTPException(status_code=500, detail=f"Failed to serialize extracted text: {str(e)}")
 
     combined_prompt = f"{prompt} - Extracted text: {results_str}"
-
-    messages = [
-        {"role": "user", "content": [{"type": "text", "text": combined_prompt}]}
-    ]
 
     try:
         response = await client.chat.completions.create(
             model=model,
-            messages=messages,
+            messages=[{"role": "user", "content": [{"type": "text", "text": combined_prompt}]}],
             temperature=0.3,
             max_tokens=25000
         )
@@ -269,57 +258,4 @@ async def process_pdf(pdf_file, prompt):
         }
     except Exception as e:
         logger.error(f"Final API request failed: {str(e)}")
-        return {
-            "error": f"Final API request failed: {str(e)}",
-            "extracted_text": all_results,
-            "skipped_pages": skipped_pages
-        }
-
-# --- Gradio Interface ---
-css = """
-.gradio-container {
-    max-width: 1200px;
-    margin: auto;
-}
-#chatbot {
-    height: calc(100vh - 200px);
-    max-height: 800px;
-}
-#conversations {
-    max-height: 600px;
-    overflow-y: auto;
-}
-"""
-
-with gr.Blocks(title="dwani.ai - Discovery", css=css, fill_width=True) as demo:
-    gr.Markdown("# Document Analytics")
-
-    with gr.Tabs():
-        # PDF Query Tab
-        with gr.Tab("PDF Query"):
-            gr.Markdown("Query PDF files with a custom prompt")
-            with gr.Row():
-                with gr.Column():
-                    pdf_input = gr.File(label="Upload PDF", file_types=[".pdf"])
-                    pdf_prompt = gr.Textbox(
-                        label="Custom Prompt",
-                        placeholder="e.g., List the key points",
-                        value="List the key points",
-                        lines=3
-                    )
-                    pdf_submit = gr.Button("Process")
-                with gr.Column():
-                    pdf_output = gr.JSON(label="PDF Response")
-            pdf_submit.click(
-                fn=process_pdf,
-                inputs=[pdf_input, pdf_prompt],
-                outputs=pdf_output
-            )
-
-# Launch the interface
-if __name__ == "__main__":
-    try:
-        demo.launch(server_name="0.0.0.0", server_port=8000)
-    except Exception as e:
-        logger.error(f"Failed to launch Gradio interface: {str(e)}")
-        print(f"Failed to launch Gradio interface: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Final API request failed: {str(e)}")

@@ -1,5 +1,12 @@
 ## Discovery - Document Analytics
 
+- Client
+    - python gradio_frontend.py
+- Server
+    - export VLLM_IP="your_vllm_ip"
+    - cd server
+    - uvicorn main:app --host 0.0.0.0 --port 18888
+
 
 - Visit : [https://app.dwani.ai](https://app.dwani.ai)
 
@@ -23,8 +30,6 @@
     ```
     - Client 
     ```bash
-    sudo apt-get install poppler-utils
-
     pip install -r client-requirements.txt
     ```
 <!-- 
@@ -32,6 +37,8 @@
         - pip install https://github.com/dwani-ai/vllm-arm64/releases/download/v0.0.0.8/vllm-0.10.1.dev603+ga01e0018b.d20250813-cp312-cp312-linux_x86_64.whl
 -->
    - Server
+    -     sudo apt-get install poppler-utils -y
+
         - Follow Steps in [server/vlm/README.md](server/vlm/README.md)
     - Client
 
@@ -41,10 +48,21 @@
 
 
 <!-- 
-
+Client 
 docker build -t dwani/discovery_ux:latest -f client.Dockerfile .
 docker push dwani/discovery_ux:latest
 
-docker run -p 80:8000 --env VLLM_IP=<gemma_ip> dwani/discovery_ux:latest
+docker run -p 80:8000 --env VLLM_IP=$VLLM_IP dwani/discovery_ux:latest
+
+Server
+
+
+docker build -t dwani/discovery_server:latest -f server.Dockerfile .
+docker push dwani/discovery_server:latest
+
+docker run -p 18888:18888 --env VLLM_IP=$VLLM_IP dwani/discovery_server:latest
+
+-- arm64 - on GH200
+
 
 -->
