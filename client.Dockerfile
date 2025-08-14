@@ -51,4 +51,4 @@ USER appuser
 EXPOSE 80
 
 # Command to run the Gradio program
-CMD ["python", "ux/discovery_demo.py"]
+CMD ["python", "ux/async_ux.py"]
