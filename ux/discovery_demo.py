@@ -78,7 +78,7 @@ def process_pdf(pdf_file, prompt):
 
     raw_response = response.choices[0].message.content
 
-    print(raw_response)
+    #print(raw_response)
     # Clean markdown code blocks
     
     cleaned_response = prompt + " - " +  raw_response
@@ -103,7 +103,7 @@ def process_pdf(pdf_file, prompt):
         max_tokens=8000
     )
     generated_response = response.choices[0].message.content
-    logger.debug(f"Generated response: {generated_response}")
+    #logger.debug(f"Generated response: {generated_response}")
 
     '''
     if raw_response.startswith("```json") and raw_response.endswith("```"):
@@ -116,7 +116,7 @@ def process_pdf(pdf_file, prompt):
 
     logger.debug(page_contents)
     '''
-    return {"extracted_text": raw_response, "query_answer": generated_response}
+    return { "query_answer": generated_response, "extracted_text": raw_response}
 
 
 # --- Gradio Interface ---
