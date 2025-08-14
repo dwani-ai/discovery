@@ -15,5 +15,5 @@
 
 - For Laptop / PC -  gpt-oss-20b
 
-    - ./build/bin/llama-server -hf ggml-org/gpt-oss-20b-GGUF -c 0 -fa --jinja --reasoning-format none --port 9500
+    - ./build/bin/llama-server -hf ggml-org/gpt-oss-20b-GGUF -c 0 -fa --jinja --reasoning-format none --port 9500 -ngl 99
 

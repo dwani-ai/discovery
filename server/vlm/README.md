@@ -40,18 +40,20 @@ pip install https://github.com/dwani-ai/vllm-arm64/releases/download/v.0.0.4/vll
 
 vllm serve RedHatAI/gemma-3-27b-it-FP8-dynamic --served-model-name gemma3 --host 0.0.0.0 --port 9000 --gpu-memory-utilization 0.4 --tensor-parallel-size 1 --max-model-len 32768 --disable-log-requests  --dtype bfloat16
 
+<!-- 
 
 vllm serve RedHatAI/gemma-3-27b-it-FP8-dynamic --served-model-name gemma3 --host 0.0.0.0 --port 9100 --gpu-memory-utilization 0.4 --tensor-parallel-size 1 --max-model-len 32768 --disable-log-requests  --dtype bfloat16
 
 
 ---
 
-
+-->
 
 for PC
 
 - vllm serve HuggingFaceTB/SmolVLM-256M-Instruct --gpu-memory-utilization 0.4 --served-model-name gemma3 --host 0.0.0.0 --port 9000 --disable-log-requests
 
+<!-- 
 vllm serve RedHatAI/gemma-3-4b-it-FP8-dynamic --served-model-name gemma3 --host 0.0.0.0 --port 9000 --gpu-memory-utilization 0.4 --tensor-parallel-size 1 --max-model-len 4096 --disable-log-requests
 
 
@@ -69,3 +71,5 @@ for Server
 
 - with llama-cpp
     - docker compose -f llama-cpp-compose.yaml up -d
+
+-->

@@ -1,5 +1,14 @@
 ## Discovery - Document Analytics
 
+
+- Visit : [https://app.dwani.ai](https://app.dwani.ai)
+
+- Client Docker Run
+    - docker run -p 80:8000 --env VLLM_IP=<server_ip> dwani/discovery_ux:latest
+
+- Server Run steps - [server/vlm/README.md](server/vlm/README.md)
+
+
 - Setup
     ```bash
     python3.10 -m venv venv
@@ -11,18 +20,11 @@
 
     pip install -r client-requirements.txt
     ```
-
-    - Server
-    ```
-    pip install -r server-requirements.txt
-    ```
 <!-- 
     for x86
         - pip install https://github.com/dwani-ai/vllm-arm64/releases/download/v0.0.0.8/vllm-0.10.1.dev603+ga01e0018b.d20250813-cp312-cp312-linux_x86_64.whl
 -->
-- Run 
-
-    - Server
+   - Server
         - Follow Steps in [server/vlm/README.md](server/vlm/README.md)
     - Client
 
