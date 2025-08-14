@@ -9,6 +9,13 @@
 - Server Run steps - [server/vlm/README.md](server/vlm/README.md)
 
 
+---
+
+![Discovery](docs/images/document_extract.png "Discovery") 
+
+
+---
+
 - Setup
     ```bash
     python3.10 -m venv venv
