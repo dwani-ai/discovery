@@ -31,7 +31,31 @@ def get_openai_client(model: str) -> OpenAI:
 
     return OpenAI(api_key="http", base_url=base_url)
 
-# --- PDF Processing Module ---
+import json
+from io import BytesIO
+from pdf2image import convert_from_path
+import base64
+import re
+import logging
+
+# Set up logging
+logging.basicConfig(level=logging.DEBUG)
+logger = logging.getLogger(__name__)
+
+def encode_image(image_bytes_io):
+    """Helper function to encode image to base64."""
+    return base64.b64encode(image_bytes_io.getvalue()).decode('utf-8')
+
+def clean_response(raw_response):
+    """Clean markdown code blocks or other non-JSON content from the response."""
+    if not raw_response:
+        return None
+    # Remove markdown code blocks (e.g., ```json ... ``` or ``` ... ```)
+    cleaned = re.sub(r'```(?:json)?\s*([\s\S]*?)\s*```', r'\1', raw_response)
+    # Remove leading/trailing whitespace
+    cleaned = cleaned.strip()
+    return cleaned
+
 def process_pdf(pdf_file, prompt):
     if not pdf_file:
         return {"error": "Please upload a PDF file"}
@@ -40,47 +64,211 @@ def process_pdf(pdf_file, prompt):
 
     file_path = pdf_file.name if hasattr(pdf_file, 'name') else pdf_file
 
-    # Change 'your_pdf_file.pdf' to the path of your PDF
-    images = convert_from_path(file_path)
+    # Convert PDF to images with error handling
+    try:
+        images = convert_from_path(file_path)
+    except Exception as e:
+        logger.error(f"PDF conversion failed: {str(e)}")
+        return {"error": f"Failed to convert PDF to images: {str(e)}"}
+
     num_pages = len(images)
-    messages = []
+    all_results = {}
+    skipped_pages = []
+    batch_size = 5  # Keep reduced batch size
+    model = "gemma3"
+    client = get_openai_client(model)
 
-    for i, image in enumerate(images):
-        image_bytes_io = BytesIO()
-        image.save(image_bytes_io, format='JPEG')
+    for batch_start in range(0, num_pages, batch_size):
+        batch_end = min(batch_start + batch_size, num_pages)
+        batch_images = images[batch_start:batch_end]
+        batch_messages = []
 
-        image_bytes_io.seek(0)  # Reset cursor to start if needed
-        image_base64 = encode_image(image_bytes_io)
-        messages.append({
+        # Convert images to base64 for current batch
+        for i, image in enumerate(batch_images, start=batch_start):
+            try:
+                image_bytes_io = BytesIO()
+                image.save(image_bytes_io, format='JPEG', quality=85)
+                image_bytes_io.seek(0)
+                image_base64 = encode_image(image_bytes_io)
+                batch_messages.append({
                     "type": "image_url",
-                    "image_url": {"url": f"data:image/png;base64,{image_base64}"}
-        })
-        
-    messages.append({
+                    "image_url": {"url": f"data:image/jpeg;base64,{image_base64}"}
+                })
+            except Exception as e:
+                logger.error(f"Image processing failed for page {i}: {str(e)}")
+                skipped_pages.append(i)
+                continue  # Skip this page but continue with the batch
+
+        if not batch_messages:
+            logger.warning(f"Skipping batch {batch_start}-{batch_end-1}: No valid images")
+            skipped_pages.extend(range(batch_start, batch_end))
+            continue
+
+        # Add text instruction for current batch
+        batch_page_count = batch_end - batch_start
+        batch_messages.append({
             "type": "text",
             "text": (
-                f"Extract plain text from these {num_pages} PDF pages. "
-                "Return the results as a valid JSON object where keys are page numbers (starting from 0) "
-                "and values are the extracted text for each page. Ensure the response is strictly JSON-formatted "
-                "and does not include markdown code blocks or any text outside the JSON object."
+                f"Extract plain text from these {batch_page_count} PDF pages. "
+                "Return the results as a valid JSON object where keys are page numbers "
+                f"(starting from {batch_start}) and values are the extracted text for each page. "
+                "Ensure the response is strictly JSON-formatted and does not include markdown code blocks "
+                "or any text outside the JSON object."
             )
         })
 
-    model = "gemma3"    
-    client = get_openai_client(model)
-    response = client.chat.completions.create(
-        model=model,
-        messages=[{"role": "user", "content": messages}],
-        temperature=0.2,
-        max_tokens=8000
-    )
-    num_pages = len(images)
+        # Send separate request for current batch
+        try:
+            response = client.chat.completions.create(
+                model=model,
+                messages=[{"role": "user", "content": batch_messages}],
+                temperature=0.2,
+                max_tokens=25000
+            )
+            raw_response = response.choices[0].message.content
+            logger.debug(f"Raw response for batch {batch_start}-{batch_end-1}: {raw_response}")
 
-    raw_response = response.choices[0].message.content
+            # Clean the response
+            cleaned_response = clean_response(raw_response)
+            if not cleaned_response:
+                logger.warning(f"Empty response for batch {batch_start}-{batch_end-1}")
+                skipped_pages.extend(range(batch_start, batch_end))
+                continue
+
+            # Parse JSON
+            try:
+                batch_results = json.loads(cleaned_response)
+                if not isinstance(batch_results, dict):
+                    logger.warning(f"Response is not a JSON object for batch {batch_start}-{batch_end-1}")
+                    skipped_pages.extend(range(batch_start, batch_end))
+                    continue
+                all_results.update(batch_results)
+            except json.JSONDecodeError as e:
+                logger.error(f"JSON parsing failed for batch {batch_start}-{batch_end-1}: {str(e)}")
+                logger.debug(f"Cleaned response: {cleaned_response}")
+                skipped_pages.extend(range(batch_start, batch_end))
+                continue  # Skip this batch but continue processing
+        except Exception as e:
+            logger.error(f"API request failed for batch {batch_start}-{batch_end-1}: {str(e)}")
+            skipped_pages.extend(range(batch_start, batch_end))
+            continue  # Skip this batch but continue processing
+
+    if not all_results and skipped_pages:
+        return {"error": "No valid text extracted from any pages", "skipped_pages": skipped_pages}
+
+    # Process the combined results with the provided prompt
+    dwani_prompt = (
+        "You are Dwani, a helpful assistant. Answer questions considering India as base country "
+        "and Karnataka as base state. Provide a concise response in one sentence maximum. "
+        "If the answer contains numerical digits, convert the digits into words."
+    )
+
+    # Convert all_results to string for the second API call
+    try:
+        results_str = json.dumps(all_results)
+    except Exception as e:
+        logger.error(f"Failed to serialize all_results: {str(e)}")
+        return {"error": f"Failed to serialize extracted text: {str(e)}", "skipped_pages": skipped_pages}
+
+    combined_prompt = f"{prompt} - Extracted text: {results_str}"
+
+    try:
+        response = client.chat.completions.create(
+            model=model,
+            messages=[
+                {
+                    "role": "system",
+                    "content": [{"type": "text", "text": dwani_prompt}]
+                },
+                {"role": "user", "content": [{"type": "text", "text": combined_prompt}]}
+            ],
+            temperature=0.3,
+            max_tokens=25000
+        )
+        generated_response = response.choices[0].message.content
+        return {
+            "response": generated_response,
+            "extracted_text": all_results,
+            "skipped_pages": skipped_pages
+        }
+    except Exception as e:
+        logger.error(f"Final API request failed: {str(e)}")
+        return {
+            "error": f"Final API request failed: {str(e)}",
+            "extracted_text": all_results,
+            "skipped_pages": skipped_pages
+        }
+'''
+# --- PDF Processing Module ---
+def process_pdf(pdf_file, prompt):
+
+    if not pdf_file:
+        return {"error": "Please upload a PDF file"}
+    if not prompt.strip():
+        return {"error": "Please provide a non-empty prompt"}
+
+    file_path = pdf_file.name if hasattr(pdf_file, 'name') else pdf_file
+
+    # Convert PDF to images
+    images = convert_from_path(file_path)
+    num_pages = len(images)
+    all_results = {}
+
+    # Process pages in batches of 10
+    batch_size = 10
+    model = "gemma3"
+    client = get_openai_client(model)
+
+    for batch_start in range(0, num_pages, batch_size):
+        batch_end = min(batch_start + batch_size, num_pages)
+        batch_images = images[batch_start:batch_end]
+        batch_messages = []
+
+        # Convert images to base64 for current batch
+        for i, image in enumerate(batch_images, start=batch_start):
+            image_bytes_io = BytesIO()
+            image.save(image_bytes_io, format='JPEG')
+            image_bytes_io.seek(0)
+            image_base64 = encode_image(image_bytes_io)
+            batch_messages.append({
+                "type": "image_url",
+                "image_url": {"url": f"data:image/jpeg;base64,{image_base64}"}
+            })
+
+        # Add text instruction for current batch
+        batch_page_count = batch_end - batch_start
+        batch_messages.append({
+            "type": "text",
+            "text": (
+                f"Extract plain text from these {batch_page_count} PDF pages. "
+                "Return the results as a valid JSON object where keys are page numbers "
+                f"(starting from {batch_start}) and values are the extracted text for each page. "
+                "Ensure the response is strictly JSON-formatted and does not include markdown code blocks "
+                "or any text outside the JSON object"
+            )
+        })
+
+        # Send separate request for current batch
+        response = client.chat.completions.create(
+            model=model,
+            messages=[{"role": "user", "content": batch_messages}],
+            temperature=0.2,
+            max_tokens=8000
+        )
+
+        # Parse and store response
+        raw_response = response.choices[0].message.content
+        try:
+            batch_results = json.loads(raw_response)
+            all_results.update(batch_results)
+        except json.JSONDecodeError:
+            return {"error": f"Invalid JSON response for batch starting at page {batch_start}"}
+
 
     #print(raw_response)
     # Clean markdown code blocks
     
+    raw_response = all_results
     cleaned_response = prompt + " - " +  raw_response
 
 
@@ -105,19 +293,10 @@ def process_pdf(pdf_file, prompt):
     generated_response = response.choices[0].message.content
     #logger.debug(f"Generated response: {generated_response}")
 
-    '''
-    if raw_response.startswith("```json") and raw_response.endswith("```"):
-        cleaned_response = raw_response[7:-3].strip()
-    elif raw_response.startswith("```") and raw_response.endswith("```"):
-        cleaned_response = raw_response[3:-3].strip()
-    
- 
-    page_contents = json.loads(cleaned_response)
-
-    logger.debug(page_contents)
-    '''
+   
     return { "query_answer": generated_response, "extracted_text": raw_response}
 
+'''
 
 # --- Gradio Interface ---
 css = """
