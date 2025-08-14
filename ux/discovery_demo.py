@@ -172,16 +172,23 @@ def process_pdf(pdf_file, prompt):
 
     combined_prompt = f"{prompt} - Extracted text: {results_str}"
 
+    messages=[
+
+        {
+            "role": "system",
+            "content": [{"type": "text", "text": dwani_prompt}]
+        },
+        {"role": "user", "content": [{"type": "text", "text": combined_prompt}]}
+    ]
+
+    messages=[
+        {"role": "user", "content": [{"type": "text", "text": combined_prompt}]}
+    ]
+
     try:
         response = client.chat.completions.create(
             model=model,
-            messages=[
-                {
-                    "role": "system",
-                    "content": [{"type": "text", "text": dwani_prompt}]
-                },
-                {"role": "user", "content": [{"type": "text", "text": combined_prompt}]}
-            ],
+            messages=messages,
             temperature=0.3,
             max_tokens=25000
         )
