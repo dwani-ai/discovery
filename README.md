@@ -4,8 +4,8 @@
     - python gradio_frontend.py
 - Server
     - export VLLM_IP="your_vllm_ip"
-
-    - uvicorn fastapi_server:app --host 0.0.0.0 --port 8001
+    - cd server
+    - uvicorn main:app --host 0.0.0.0 --port 18888
 
 
 - Visit : [https://app.dwani.ai](https://app.dwani.ai)
@@ -30,8 +30,6 @@
     ```
     - Client 
     ```bash
-    sudo apt-get install poppler-utils
-
     pip install -r client-requirements.txt
     ```
 <!-- 
@@ -39,6 +37,8 @@
         - pip install https://github.com/dwani-ai/vllm-arm64/releases/download/v0.0.0.8/vllm-0.10.1.dev603+ga01e0018b.d20250813-cp312-cp312-linux_x86_64.whl
 -->
    - Server
+    -     sudo apt-get install poppler-utils -y
+
         - Follow Steps in [server/vlm/README.md](server/vlm/README.md)
     - Client
 

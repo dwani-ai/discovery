@@ -1,13 +1,18 @@
 import gradio as gr
 import requests
 import logging
-
+import os
 # Set up logging
 logging.basicConfig(level=logging.DEBUG)
 logger = logging.getLogger(__name__)
 
 # FastAPI server URL
-API_URL = "http://0.0.0.0:8001/process_pdf"
+#API_URL = "http://0.0.0.0:18888/process_pdf"
+
+
+vlm_base_url = os.getenv('VLLM_IP', "0.0.0.0")
+API_URL = f"http://{vlm_base_url}:18888/process_pdf"
+
 
 def process_pdf(pdf_file, prompt):
     """Send PDF and prompt to FastAPI server and return the response."""
