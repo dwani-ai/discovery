@@ -1,5 +1,21 @@
 ## Discovery - Document Analytics
 
+
+- Visit : [https://app.dwani.ai](https://app.dwani.ai)
+
+- Client Docker Run
+    - docker run -p 80:8000 --env VLLM_IP=<server_ip> dwani/discovery_ux:latest
+
+- Server Run steps - [server/vlm/README.md](server/vlm/README.md)
+
+
+---
+
+![Discovery](docs/images/document_extract.png "Discovery") 
+
+
+---
+
 - Setup
     ```bash
     python3.10 -m venv venv
@@ -11,18 +27,12 @@
 
     pip install -r client-requirements.txt
     ```
-
-    - Server
-    ```
-    pip install -r server-requirements.txt
-    ```
-
-- Run 
-
-    - Server
-    ```bash
-    vllm serve HuggingFaceTB/SmolVLM-256M-Instruct --gpu-memory-utilization 0.4 --served-model-name gemma3 --host 0.0.0.0 --port 9000 --disable-log-requests
-    ```
+<!-- 
+    for x86
+        - pip install https://github.com/dwani-ai/vllm-arm64/releases/download/v0.0.0.8/vllm-0.10.1.dev603+ga01e0018b.d20250813-cp312-cp312-linux_x86_64.whl
+-->
+   - Server
+        - Follow Steps in [server/vlm/README.md](server/vlm/README.md)
     - Client
 
     ```bash
@@ -35,6 +45,6 @@
 docker build -t dwani/discovery_ux:latest -f client.Dockerfile .
 docker push dwani/discovery_ux:latest
 
-docker run -p 80:80 --env DWANI_API_KEY=<your_key> --env DWANI_API_BASE_URL=<your_url>  --env GPT_OSS_API_URL=<gpt_url> --env GEMMA_VLLM_IP=<gemma_ip> dwani/workshop:latest
+docker run -p 80:8000 --env VLLM_IP=<gemma_ip> dwani/discovery_ux:latest
 
 -->

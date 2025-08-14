@@ -1,17 +1,5 @@
 
- ./build/bin/llama-server \
-    --hf-repo unsloth/gemma-3-4b-it-GGUF \
-    --hf-file gemma-3-4b-it-Q4_K_M.gguf
-
-./build/bin/llama-server \
-    --hf-repo unsloth/gemma-3-4b-it-GGUF \
-    --hf-file mmproj-BF16.gguf
-
-
-./build/bin/llama-server     --hf-repo unsloth/gemma-3-4b-it-GGUF     --hf-file gemma-3-4b-it-Q4_K_M.gguf --port 9500 --host 0.0.0.0
-
-./build/bin/llama-server     --hf-repo ggml-org/gemma-3-12b-it-GGUF
-
+- To Run - gpt-oss
 llama.cpp for gpt-oss models from OpenAI
 
 
@@ -44,3 +32,21 @@ llama.cpp for gpt-oss models from OpenAI
 - Reference 
   - https://blogs.nvidia.com/blog/rtx-ai-garage-openai-oss/
   - HF model repo - https://huggingface.co/collections/ggml-org/gpt-oss-68923b60bee37414546c70bf
+
+
+
+To Run - gemma
+ ./build/bin/llama-server \
+    --hf-repo unsloth/gemma-3-4b-it-GGUF \
+    --hf-file gemma-3-4b-it-Q4_K_M.gguf
+
+./build/bin/llama-server \
+    --hf-repo unsloth/gemma-3-4b-it-GGUF \
+    --hf-file mmproj-BF16.gguf
+
+
+./build/bin/llama-server     --hf-repo unsloth/gemma-3-4b-it-GGUF     --hf-file gemma-3-4b-it-Q4_K_M.gguf --port 9500 --host 0.0.0.0
+
+./build/bin/llama-server     --hf-repo ggml-org/gemma-3-12b-it-GGUF
+
+
