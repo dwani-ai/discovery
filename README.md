@@ -1,5 +1,12 @@
 ## Discovery - Document Analytics
 
+- Client
+    - python gradio_frontend.py
+- Server
+    - export VLLM_IP="your_vllm_ip"
+
+    - uvicorn fastapi_server:app --host 0.0.0.0 --port 8001
+
 
 - Visit : [https://app.dwani.ai](https://app.dwani.ai)
 
