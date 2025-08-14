@@ -1,24 +1,28 @@
 import gradio as gr
 import logging
 import json
-from openai import OpenAI
+from openai import AsyncOpenAI  # Use AsyncOpenAI for async support
 import base64
 from io import BytesIO
 from pdf2image import convert_from_path
 import os
+import asyncio
+import aiohttp
+import re
 
 # Set up logging
-logging.basicConfig(level=logging.INFO)
+logging.basicConfig(level=logging.DEBUG)
 logger = logging.getLogger(__name__)
 
 vlm_base_url = os.getenv('VLLM_IP', "0.0.0.0")
+
 def encode_image(image: BytesIO) -> str:
     """Encode image bytes to base64 string."""
     return base64.b64encode(image.read()).decode("utf-8")
 
-# Dynamic LLM client based on model
-def get_openai_client(model: str) -> OpenAI:
-    """Initialize OpenAI client with model-specific base URL."""
+# Dynamic AsyncOpenAI client based on model
+def get_openai_client(model: str) -> AsyncOpenAI:
+    """Initialize AsyncOpenAI client with model-specific base URL."""
     valid_models = ["gemma3", "gpt-oss"]
     if model not in valid_models:
         raise ValueError(f"Invalid model: {model}. Choose from: {', '.join(valid_models)}")
@@ -29,22 +33,7 @@ def get_openai_client(model: str) -> OpenAI:
     }
     base_url = f"http://{vlm_base_url}:{model_ports[model]}/v1"
 
-    return OpenAI(api_key="http", base_url=base_url)
-
-import json
-from io import BytesIO
-from pdf2image import convert_from_path
-import base64
-import re
-import logging
-
-# Set up logging
-logging.basicConfig(level=logging.DEBUG)
-logger = logging.getLogger(__name__)
-
-def encode_image(image_bytes_io):
-    """Helper function to encode image to base64."""
-    return base64.b64encode(image_bytes_io.getvalue()).decode('utf-8')
+    return AsyncOpenAI(api_key="http", base_url=base_url)
 
 def clean_response(raw_response):
     """Clean markdown code blocks or other non-JSON content from the response."""
@@ -56,7 +45,40 @@ def clean_response(raw_response):
     cleaned = cleaned.strip()
     return cleaned
 
-def process_pdf(pdf_file, prompt):
+async def process_batch(client, batch_messages, batch_start, batch_end, model):
+    """Process a single batch of images asynchronously."""
+    try:
+        response = await client.chat.completions.create(
+            model=model,
+            messages=[{"role": "user", "content": batch_messages}],
+            temperature=0.2,
+            max_tokens=25000
+        )
+        raw_response = response.choices[0].message.content
+        logger.debug(f"Raw response for batch {batch_start}-{batch_end-1}: {raw_response}")
+
+        # Clean the response
+        cleaned_response = clean_response(raw_response)
+        if not cleaned_response:
+            logger.warning(f"Empty response for batch {batch_start}-{batch_end-1}")
+            return None, list(range(batch_start, batch_end))
+
+        # Parse JSON
+        try:
+            batch_results = json.loads(cleaned_response)
+            if not isinstance(batch_results, dict):
+                logger.warning(f"Response is not a JSON object for batch {batch_start}-{batch_end-1}")
+                return None, list(range(batch_start, batch_end))
+            return batch_results, []
+        except json.JSONDecodeError as e:
+            logger.error(f"JSON parsing failed for batch {batch_start}-{batch_end-1}: {str(e)}")
+            logger.debug(f"Cleaned response: {cleaned_response}")
+            return None, list(range(batch_start, batch_end))
+    except Exception as e:
+        logger.error(f"API request failed for batch {batch_start}-{batch_end-1}: {str(e)}")
+        return None, list(range(batch_start, batch_end))
+
+async def process_pdf(pdf_file, prompt):
     if not pdf_file:
         return {"error": "Please upload a PDF file"}
     if not prompt.strip():
@@ -78,6 +100,8 @@ def process_pdf(pdf_file, prompt):
     model = "gemma3"
     client = get_openai_client(model)
 
+    # Prepare batches
+    batches = []
     for batch_start in range(0, num_pages, batch_size):
         batch_end = min(batch_start + batch_size, num_pages)
         batch_images = images[batch_start:batch_end]
@@ -97,7 +121,7 @@ def process_pdf(pdf_file, prompt):
             except Exception as e:
                 logger.error(f"Image processing failed for page {i}: {str(e)}")
                 skipped_pages.append(i)
-                continue  # Skip this page but continue with the batch
+                continue
 
         if not batch_messages:
             logger.warning(f"Skipping batch {batch_start}-{batch_end-1}: No valid images")
@@ -117,41 +141,18 @@ def process_pdf(pdf_file, prompt):
             )
         })
 
-        # Send separate request for current batch
-        try:
-            response = client.chat.completions.create(
-                model=model,
-                messages=[{"role": "user", "content": batch_messages}],
-                temperature=0.2,
-                max_tokens=25000
-            )
-            raw_response = response.choices[0].message.content
-            logger.debug(f"Raw response for batch {batch_start}-{batch_end-1}: {raw_response}")
+        batches.append((batch_messages, batch_start, batch_end))
 
-            # Clean the response
-            cleaned_response = clean_response(raw_response)
-            if not cleaned_response:
-                logger.warning(f"Empty response for batch {batch_start}-{batch_end-1}")
-                skipped_pages.extend(range(batch_start, batch_end))
-                continue
+    # Process batches concurrently
+    tasks = [process_batch(client, messages, start, end, model) for messages, start, end in batches]
+    batch_results = await asyncio.gather(*tasks, return_exceptions=True)
 
-            # Parse JSON
-            try:
-                batch_results = json.loads(cleaned_response)
-                if not isinstance(batch_results, dict):
-                    logger.warning(f"Response is not a JSON object for batch {batch_start}-{batch_end-1}")
-                    skipped_pages.extend(range(batch_start, batch_end))
-                    continue
-                all_results.update(batch_results)
-            except json.JSONDecodeError as e:
-                logger.error(f"JSON parsing failed for batch {batch_start}-{batch_end-1}: {str(e)}")
-                logger.debug(f"Cleaned response: {cleaned_response}")
-                skipped_pages.extend(range(batch_start, batch_end))
-                continue  # Skip this batch but continue processing
-        except Exception as e:
-            logger.error(f"API request failed for batch {batch_start}-{batch_end-1}: {str(e)}")
-            skipped_pages.extend(range(batch_start, batch_end))
-            continue  # Skip this batch but continue processing
+    # Combine results
+    for batch_result, batch_skipped in batch_results:
+        if batch_result:
+            all_results.update(batch_result)
+        if batch_skipped:
+            skipped_pages.extend(batch_skipped)
 
     if not all_results and skipped_pages:
         return {"error": "No valid text extracted from any pages", "skipped_pages": skipped_pages}
@@ -173,7 +174,7 @@ def process_pdf(pdf_file, prompt):
     combined_prompt = f"{prompt} - Extracted text: {results_str}"
 
     try:
-        response = client.chat.completions.create(
+        response = await client.chat.completions.create(
             model=model,
             messages=[
                 {
@@ -215,13 +216,10 @@ css = """
 }
 """
 
-
-
 with gr.Blocks(title="dwani.ai - Discovery", css=css, fill_width=True) as demo:
     gr.Markdown("# Document Analytics")
 
     with gr.Tabs():
-
         # PDF Query Tab
         with gr.Tab("PDF Query"):
             gr.Markdown("Query PDF files with a custom prompt")
@@ -239,7 +237,7 @@ with gr.Blocks(title="dwani.ai - Discovery", css=css, fill_width=True) as demo:
                     pdf_output = gr.JSON(label="PDF Response")
             pdf_submit.click(
                 fn=process_pdf,
-                inputs=[pdf_input,pdf_prompt],
+                inputs=[pdf_input, pdf_prompt],
                 outputs=pdf_output
             )
 
