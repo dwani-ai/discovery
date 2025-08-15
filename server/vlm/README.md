@@ -35,6 +35,7 @@ pip install torch==2.7.1 torchaudio==2.7.1 torchvision --index-url https://downl
 pip install https://github.com/sachinsshetty/flashinfer-arm64/releases/download/v0.0.0.1/flashinfer_python-0.2.11.post1-py3-none-any.whl
 -->
 
+pip install xfomers!!
 
 pip install https://github.com/dwani-ai/vllm-arm64/releases/download/v.0.0.4/vllm-0.10.1.dev0+g6d8d0a24c.d20250726-cp312-cp312-linux_aarch64.whl
 

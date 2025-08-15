@@ -40,7 +40,6 @@ git submodule update --init --recursive
 
 
 
-pip install ninja
 pip install --upgrade setuptools twine setuptools-scm wheel setuptools ninja
 
 
