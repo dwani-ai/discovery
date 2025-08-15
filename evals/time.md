@@ -1,7 +1,8 @@
+Inference Speed
 
-
-data_evals_faq.pdf 935.008 seconds
-
-vision transformers scling  939.243 seconds
-
-denov3 1070.479 seconds
+|File |  H200 sec | H100 sec |
+|---|--- |---|
+|data_evals_faq.pdf | 935.008  | | 
+|vision transformers scling pdf | 939.243 |
+|dino_v3 |1070.479 |1186.829 , 588.600, 1131.821  |
+| sample resume | |25.025 |
