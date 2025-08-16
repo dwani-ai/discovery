@@ -63,5 +63,8 @@ docker run -p 18888:18888 --env VLLM_IP=$VLLM_IP dwani/discovery_server:latest
 
 -- arm64 - on GH200
 
+sudo apt-get update
+sudo apt-get install tesseract-ocr
+
 
 -->
