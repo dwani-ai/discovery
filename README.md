@@ -4,8 +4,7 @@
     - python gradio_frontend.py
 - Server
     - export VLLM_IP="your_vllm_ip"
-    - cd server
-    - uvicorn main:app --host 0.0.0.0 --port 18888
+    - uvicorn server.main:app --host 0.0.0.0 --port 18888
 
 
 - Visit : [https://app.dwani.ai](https://app.dwani.ai)

@@ -3,7 +3,7 @@ import requests
 import logging
 import os
 # Set up logging
-logging.basicConfig(level=logging.DEBUG)
+logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 # FastAPI server URL

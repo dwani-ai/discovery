@@ -1,6 +1,6 @@
 import logging
 import json
-from fastapi import FastAPI, UploadFile, File, Form, HTTPException
+from fastapi import FastAPI, UploadFile, File, Form, HTTPException, Request
 from fastapi.responses import JSONResponse
 from openai import AsyncOpenAI
 import base64
@@ -10,12 +10,27 @@ import os
 import asyncio
 import re
 from typing import List, Dict, Optional
+import time
+from starlette.middleware.base import BaseHTTPMiddleware
 
 # Set up logging
-logging.basicConfig(level=logging.DEBUG)
+logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 app = FastAPI(title="Dwani PDF Processing API")
+
+# Middleware to measure request processing time
+class TimingMiddleware(BaseHTTPMiddleware):
+    async def dispatch(self, request: Request, call_next):
+        start_time = time.time()  # Record start time
+        response = await call_next(request)  # Process the request
+        end_time = time.time()  # Record end time
+        processing_time = end_time - start_time  # Calculate processing time
+        logger.info(f"Request: {request.method} {request.url.path} took {processing_time:.3f} seconds")
+        return response
+
+# Add the middleware to the FastAPI app
+app.add_middleware(TimingMiddleware)
 
 vlm_base_url = os.getenv('VLLM_IP', "0.0.0.0")
 
@@ -50,7 +65,7 @@ async def process_single_batch(client, model, batch_messages, batch_start, batch
             model=model,
             messages=[{"role": "user", "content": batch_messages}],
             temperature=0.2,
-            max_tokens=25000
+            max_tokens=29695
         )
         raw_response = response.choices[0].message.content
         logger.debug(f"Raw response for batch {batch_start}-{batch_end-1}: {raw_response}")
@@ -101,7 +116,7 @@ async def process_single_page(client, model, image, page_idx):
             model=model,
             messages=[{"role": "user", "content": single_message}],
             temperature=0.2,
-            max_tokens=25000
+            max_tokens=29695
         )
         raw_response = response.choices[0].message.content
         logger.debug(f"Raw response for skipped page {page_idx}: {raw_response}")
@@ -248,7 +263,7 @@ async def process_pdf_endpoint(file: UploadFile = File(...), prompt: str = Form(
             model=model,
             messages=[{"role": "user", "content": [{"type": "text", "text": combined_prompt}]}],
             temperature=0.3,
-            max_tokens=25000
+            max_tokens=29695
         )
         generated_response = response.choices[0].message.content
         return {
