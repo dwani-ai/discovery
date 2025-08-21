@@ -139,6 +139,22 @@ async def process_single_page(client, model, image, page_idx):
         logger.error(f"Failed to process skipped page {page_idx}: {str(e)}")
         return None, page_idx
 
+async def render_pdf_to_png(pdf_file):
+
+    # Save uploaded file temporarily
+    try:
+        with open("temp.pdf", "wb") as f:
+            f.write(await pdf_file.read())
+        images = convert_from_path("temp.pdf")
+    except Exception as e:
+        logger.error(f"PDF conversion failed: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Failed to convert PDF to images: {str(e)}")
+    finally:
+        if os.path.exists("temp.pdf"):
+            os.remove("temp.pdf")
+
+    return images
+
 @app.post("/process_pdf")
 async def process_pdf_endpoint(file: UploadFile = File(...), prompt: str = Form(...)):
     """Endpoint to process PDF and extract text based on prompt."""
@@ -147,17 +163,8 @@ async def process_pdf_endpoint(file: UploadFile = File(...), prompt: str = Form(
     if not prompt.strip():
         raise HTTPException(status_code=400, detail="Please provide a non-empty prompt")
 
-    # Save uploaded file temporarily
-    try:
-        with open("temp.pdf", "wb") as f:
-            f.write(await file.read())
-        images = convert_from_path("temp.pdf")
-    except Exception as e:
-        logger.error(f"PDF conversion failed: {str(e)}")
-        raise HTTPException(status_code=500, detail=f"Failed to convert PDF to images: {str(e)}")
-    finally:
-        if os.path.exists("temp.pdf"):
-            os.remove("temp.pdf")
+
+    images = render_pdf_to_png(file)
 
     num_pages = len(images)
     all_results = {}
