@@ -9,7 +9,7 @@ logger = logging.getLogger(__name__)
 
 # FastAPI server URL
 vlm_base_url = os.getenv('VLLM_IP', "0.0.0.0")
-API_URL = f"http://{vlm_base_url}:18888/process_pdf"
+API_URL = f"http://{vlm_base_url}:18889/process_pdf"
 
 # Store uploaded PDFs to allow multiple queries
 uploaded_pdf = {"path": None}
