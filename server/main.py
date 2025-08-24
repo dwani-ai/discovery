@@ -140,7 +140,7 @@ async def process_single_page(client, model, image, page_idx):
         return None, page_idx
 
 async def render_pdf_to_png(pdf_file):
-
+    """Convert PDF to images."""
     # Save uploaded file temporarily
     try:
         with open("temp.pdf", "wb") as f:
@@ -156,15 +156,14 @@ async def render_pdf_to_png(pdf_file):
     return images
 
 @app.post("/process_pdf")
-async def process_pdf_endpoint(file: UploadFile = File(...), prompt: str = Form(...)):
+async def process_pdf(file: UploadFile = File(...), prompt: str = Form(...)):
     """Endpoint to process PDF and extract text based on prompt."""
     if not file:
         raise HTTPException(status_code=400, detail="Please upload a PDF file")
     if not prompt.strip():
         raise HTTPException(status_code=400, detail="Please provide a non-empty prompt")
 
-
-    images = render_pdf_to_png(file)
+    images = await render_pdf_to_png(file)
 
     num_pages = len(images)
     all_results = {}
@@ -263,7 +262,7 @@ async def process_pdf_endpoint(file: UploadFile = File(...), prompt: str = Form(
         logger.error(f"Failed to serialize all_results: {str(e)}")
         raise HTTPException(status_code=500, detail=f"Failed to serialize extracted text: {str(e)}")
 
-    combined_prompt = f"{prompt} - Extracted text: {results_str}"
+    combined_prompt = f"{dwani_prompt}\nUser prompt: {prompt}\nExtracted text: {results_str}"
 
     try:
         response = await client.chat.completions.create(
@@ -277,6 +276,51 @@ async def process_pdf_endpoint(file: UploadFile = File(...), prompt: str = Form(
             "response": generated_response,
             "extracted_text": all_results,
             "skipped_pages": skipped_pages
+        }
+    except Exception as e:
+        logger.error(f"Final API request failed: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Final API request failed: {str(e)}")
+
+@app.post("/process_message")
+async def process_message(prompt: str = Form(...), extracted_text: str = Form(...)):
+    """Endpoint to process a query using extracted text."""
+    if not prompt.strip():
+        raise HTTPException(status_code=400, detail="Please provide a non-empty prompt")
+    if not extracted_text.strip():
+        raise HTTPException(status_code=400, detail="Please provide non-empty extracted text")
+
+    model = "gemma3"
+    client = get_openai_client(model)
+
+    try:
+        all_results = json.loads(extracted_text)
+        if not isinstance(all_results, dict):
+            raise ValueError("Extracted text must be a valid JSON object")
+    except json.JSONDecodeError as e:
+        logger.error(f"Invalid extracted text format: {str(e)}")
+        raise HTTPException(status_code=400, detail=f"Invalid extracted text format: {str(e)}")
+
+    # Process with the provided prompt
+    dwani_prompt = (
+        "You are Dwani, a helpful assistant. Answer questions considering India as base country "
+        "and Karnataka as base state. Provide a concise response in one sentence maximum. "
+        "If the answer contains numerical digits, convert the digits into words."
+    )
+
+    combined_prompt = f"{dwani_prompt}\nUser prompt: {prompt}\nExtracted text: {json.dumps(all_results)}"
+
+    try:
+        response = await client.chat.completions.create(
+            model=model,
+            messages=[{"role": "user", "content": [{"type": "text", "text": combined_prompt}]}],
+            temperature=0.3,
+            max_tokens=29695
+        )
+        generated_response = response.choices[0].message.content
+        return {
+            "response": generated_response,
+            "extracted_text": all_results,
+            "skipped_pages": []
         }
     except Exception as e:
         logger.error(f"Final API request failed: {str(e)}")
