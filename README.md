@@ -26,13 +26,6 @@ uvicorn server.main:app --host 0.0.0.0 --port 18889
 
 - VLLM Server setup - [server/vlm/README.md](server/vlm/README.md)
 
-
-- Client Docker Run
-```bash
-docker run -p 80:8000 --env VLLM_IP=<server_ip> dwani/discovery_ux:latest
-```
-- Server  Docker Run 
-
 ---
 
 
