@@ -22,7 +22,7 @@ def process_pdf_message(history, message, pdf_file=None):
 
     pdf_path = uploaded_pdf.get("path")
     if not pdf_path:
-        return history + [[message, "⚠️ Please upload a PDF first!"]]
+        return history + [{"role": "user", "content": message}, {"role": "assistant", "content": "⚠️ Please upload a PDF first!"}], ""
 
     try:
         with open(pdf_path, "rb") as f:
@@ -33,10 +33,10 @@ def process_pdf_message(history, message, pdf_file=None):
             full_result = response.json()
 
             result = full_result['response']
-            return history + [[message, str(result)]]
+            return history + [{"role": "user", "content": message}, {"role": "assistant", "content": str(result)}], ""
     except requests.RequestException as e:
         logger.error(f"API request failed: {str(e)}")
-        return history + [[message, f"❌ Error: {str(e)}"]]
+        return history + [{"role": "user", "content": message}, {"role": "assistant", "content": f"❌ Error: {str(e)}"}], ""
 
 def clear_chat():
     """Clears the chat history."""
@@ -64,7 +64,12 @@ with gr.Blocks(title="dwani.ai - Discovery", css=css, fill_width=True) as demo:
 
     with gr.Row():
         with gr.Column(scale=3):
-            chatbot = gr.Chatbot([], elem_id="chatbot", label="Document Assistant")
+            chatbot = gr.Chatbot(
+                [],
+                elem_id="chatbot",
+                label="Document Assistant",
+                type="messages"  # Explicitly set to 'messages' to avoid deprecation warning
+            )
 
             msg = gr.Textbox(
                 placeholder="Ask something about the document...",
@@ -91,7 +96,11 @@ with gr.Blocks(title="dwani.ai - Discovery", css=css, fill_width=True) as demo:
             )
 
     # Event binding
-    msg.submit(process_pdf_message, inputs=[chatbot, msg, pdf_input], outputs=chatbot)
+    msg.submit(
+        process_pdf_message,
+        inputs=[chatbot, msg, pdf_input],
+        outputs=[chatbot, msg]  # Include msg to clear the textbox
+    )
     clear.click(clear_chat, inputs=None, outputs=chatbot)
     new_chat_button.click(new_chat, inputs=None, outputs=[chatbot, pdf_input])  # Bind new chat button
 
