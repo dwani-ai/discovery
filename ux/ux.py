@@ -36,10 +36,10 @@ def process_pdf(pdf_file, message):
 
 def process_message(history, message, pdf_file=None):
     """Handles chat messages, reusing extracted text for follow-up questions."""
-    # Update PDF path if a new file is uploaded
-    if pdf_file is not None:
+    # Update PDF path only if a new file is uploaded and different
+    if pdf_file is not None and pdf_file != state["pdf_path"]:
         state["pdf_path"] = pdf_file
-        state["extracted_text"] = None  # Reset extracted text for new PDF
+        state["extracted_text"] = None  # Reset extracted text only for new PDF
 
     # Check if PDF is uploaded
     if not state["pdf_path"]:
