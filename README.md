@@ -3,19 +3,28 @@
 
 - Visit : [https://app.dwani.ai](https://app.dwani.ai)
 
+
+![Discovery](docs/images/document_extract.png "Discovery") 
+
+
+```bash
+sudo apt-get update
+sudo apt-get install poppler-utils -y
+```
+
+
 - Client
     - python ux/ux.py
 - Server
     - export VLLM_IP="your_vllm_ip"
     - uvicorn server.main:app --host 0.0.0.0 --port 18889
-
+- VLLM Server setup - [server/vlm/README.md](server/vlm/README.md)
 
 
 - Client Docker Run
     - docker run -p 80:8000 --env VLLM_IP=<server_ip> dwani/discovery_ux:latest
 
-- Server Run steps - [server/vlm/README.md](server/vlm/README.md)
-
+- Client Server Run 
 
 ---
 
@@ -45,8 +54,6 @@ For Client
 
 ```
 ---
-
-![Discovery](docs/images/document_extract.png "Discovery") 
 
 
 ---
