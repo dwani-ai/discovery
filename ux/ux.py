@@ -30,7 +30,9 @@ def process_pdf_message(history, message, pdf_file=None):
             data = {"prompt": message}
             response = requests.post(API_URL, files=files, data=data)
             response.raise_for_status()
-            result = response.json()
+            full_result = response.json()
+
+            result = full_result['response']
             return history + [[message, str(result)]]
     except requests.RequestException as e:
         logger.error(f"API request failed: {str(e)}")
