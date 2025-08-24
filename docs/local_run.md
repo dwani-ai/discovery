@@ -1,3 +1,5 @@
+### To Run locally  - English only 
+```bash
 sudo apt-get update
 sudo apt-get install tesseract-ocr
 sudo apt-get install poppler-utils -y
@@ -19,3 +21,5 @@ For server -
 
 For Client
 - python ux/ux.py
+
+```
