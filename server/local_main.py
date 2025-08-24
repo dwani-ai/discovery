@@ -81,3 +81,41 @@ async def process_pdf(file: UploadFile = File(...), prompt: str = Form(...)):
         "response": answer,
         "extracted_text": extracted_text
     })
+
+@app.post("/process_message")
+async def process_message(prompt: str = Form(...), extracted_text: str = Form(...)):
+    if not prompt.strip():
+        raise HTTPException(status_code=400, detail="Please provide a non-empty prompt")
+    if not extracted_text.strip():
+        raise HTTPException(status_code=400, detail="Please provide non-empty extracted text")
+
+    try:
+        all_results = json.loads(extracted_text)
+        if not isinstance(all_results, dict):
+            raise ValueError("Extracted text must be a valid JSON object")
+    except json.JSONDecodeError as e:
+        logger.error(f"Invalid extracted text format: {str(e)}")
+        raise HTTPException(status_code=400, detail=f"Invalid extracted text format: {str(e)}")
+
+    client = get_openai_client()
+
+    extracted_text_str = json.dumps(all_results)
+
+    combined_prompt = f"{prompt}\n\nExtracted text from PDF:\n{extracted_text_str}"
+
+    try:
+        response = await client.chat.completions.create(
+            model="gpt-oss",
+            messages=[{"role": "user", "content": combined_prompt}],
+            temperature=0.3,
+            max_tokens=2048,
+        )
+        answer = response.choices[0].message.content
+    except Exception as e:
+        logger.error(f"GPT-OSS API call failed: {e}")
+        raise HTTPException(status_code=500, detail="Failed to process prompt with GPT-OSS")
+
+    return JSONResponse(content={
+        "response": answer,
+        "extracted_text": all_results
+    })
