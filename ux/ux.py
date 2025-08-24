@@ -14,7 +14,6 @@ API_URL = f"http://{vlm_base_url}:18889/process_pdf"
 # Store uploaded PDFs to allow multiple queries
 uploaded_pdf = {"path": None}
 
-
 def process_pdf_message(history, message, pdf_file=None):
     """Handles a chat message with optional PDF file, talks to backend API."""
     # If a new PDF is uploaded, store its path
@@ -37,6 +36,14 @@ def process_pdf_message(history, message, pdf_file=None):
         logger.error(f"API request failed: {str(e)}")
         return history + [[message, f"❌ Error: {str(e)}"]]
 
+def clear_chat():
+    """Clears the chat history."""
+    return []
+
+def new_chat():
+    """Clears the chat history and resets the uploaded PDF."""
+    uploaded_pdf["path"] = None
+    return [], None  # Clears chatbot history and PDF input
 
 # Custom styling
 css = """
@@ -65,7 +72,9 @@ with gr.Blocks(title="dwani.ai - Discovery", css=css, fill_width=True) as demo:
                 label="Attach PDF (only needs to be uploaded once per session)",
                 file_types=[".pdf"]
             )
-            clear = gr.Button("Clear Chat")
+            with gr.Row():
+                clear = gr.Button("Clear Chat")
+                new_chat_button = gr.Button("New Chat")  # New button for starting a new chat
 
         with gr.Column(scale=1):
             gr.Markdown("### Instructions")
@@ -74,12 +83,15 @@ with gr.Blocks(title="dwani.ai - Discovery", css=css, fill_width=True) as demo:
                 1. Upload a PDF document.  
                 2. Ask questions about the document in the chat box.  
                 3. The assistant will return structured responses from the backend.  
+                4. Use 'Clear Chat' to reset the conversation history.  
+                5. Use 'New Chat' to start a new session (clears chat and PDF).  
                 """
             )
 
     # Event binding
     msg.submit(process_pdf_message, inputs=[chatbot, msg, pdf_input], outputs=chatbot)
-    clear.click(lambda: [], None, chatbot)
+    clear.click(clear_chat, inputs=None, outputs=chatbot)
+    new_chat_button.click(new_chat, inputs=None, outputs=[chatbot, pdf_input])  # Bind new chat button
 
 if __name__ == "__main__":
     try:
