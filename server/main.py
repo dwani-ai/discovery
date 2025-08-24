@@ -251,9 +251,7 @@ async def process_pdf(file: UploadFile = File(...), prompt: str = Form(...)):
 
     # Process with the provided prompt
     dwani_prompt = (
-        "You are Dwani, a helpful assistant. Answer questions considering India as base country "
-        "and Karnataka as base state. Provide a concise response in one sentence maximum. "
-        "If the answer contains numerical digits, convert the digits into words."
+        "You are dwani, a helpful assistant. Provide a concise response in one sentence maximum. "
     )
 
     try:
@@ -302,9 +300,7 @@ async def process_message(prompt: str = Form(...), extracted_text: str = Form(..
 
     # Process with the provided prompt
     dwani_prompt = (
-        "You are Dwani, a helpful assistant. Answer questions considering India as base country "
-        "and Karnataka as base state. Provide a concise response in one sentence maximum. "
-        "If the answer contains numerical digits, convert the digits into words."
+        "You are dwani, a helpful assistant. Provide a concise response in one sentence maximum. "
     )
 
     combined_prompt = f"{dwani_prompt}\nUser prompt: {prompt}\nExtracted text: {json.dumps(all_results)}"
