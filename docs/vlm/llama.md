@@ -8,7 +8,7 @@ sudo apt install libcurl4-openssl-dev
 
 git clone --depth 1 https://github.com/ggml-org/llama.cpp.git
 cd llama.cpp
-git checkout 0d8831543cdc368fb248bae6f1b4aa5516684edc
+
 
 ```
 - With NVIDIA GPU and CUDA Toolkit
