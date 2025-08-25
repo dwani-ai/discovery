@@ -18,6 +18,12 @@ sudo apt-get update
 sudo apt-get -y install cuda-toolkit-12-8
 
 
+
+export PATH=/usr/local/cuda/bin:$PATH
+export LD_LIBRARY_PATH=/usr/local/cuda/lib64:$LD_LIBRARY_PATH
+
+
+
 - cuda 13
 wget https://developer.download.nvidia.com/compute/cuda/repos/ubuntu2204/x86_64/cuda-ubuntu2204.pin
 
@@ -40,7 +46,7 @@ sudo apt-get install -y cuda-drivers
 
 --
 
-- To Reset 
+- To Reset / remove CUDA
 
 sudo apt remove --purge nvidia-*
 sudo apt update
