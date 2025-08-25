@@ -1,0 +1,7 @@
+site_name: Discovery
+theme:
+  name: material
+exclude_docs: |
+  *.py
+  node_modules/
+  *.git
