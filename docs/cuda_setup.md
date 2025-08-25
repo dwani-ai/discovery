@@ -18,3 +18,10 @@ sudo apt-get -y install cuda-toolkit-13-0
 
 
 sudo apt-get install -y cuda-drivers
+
+--
+
+sudo apt remove --purge nvidia-*
+sudo apt update
+sudo apt install linux-headers-$(uname -r) dkms
+sudo apt install --reinstall nvidia-driver-580
