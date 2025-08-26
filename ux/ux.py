@@ -31,7 +31,7 @@ def validate_config() -> None:
     if VLLM_IP == '0.0.0.0':
         logger.warning("VLLM_IP not set, using default '0.0.0.0'. This may cause issues in production.")
     try:
-        response = requests.get(f"http://{VLLM_IP}:18889/health", timeout=5)
+        response = requests.get(f"http://{VLLM_IP}:18889/health", timeout=30)
         response.raise_for_status()
     except requests.RequestException as e:
         logger.error(f"Failed to connect to API server at {VLLM_IP}: {str(e)}")
