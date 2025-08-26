@@ -25,6 +25,12 @@ cmake -B build
 cmake --build build --config Release -j4
 ```
 
+
+- For Vision + Text : Use Gemma
+
+./build/bin/llama-server -hf ggml-org/gemma-3-4b-it-GGUF --host 0.0.0.0 --port 9000 --n-gpu-layers 99 --ctx-size 8192 --alias gemma3 
+
+
 - For Laptop / PC -  gpt-oss-20b
 ```bash
 ./build/bin/llama-server -hf ggml-org/gpt-oss-20b-GGUF -c 0 -fa --jinja --reasoning-format none --port 9500
@@ -35,9 +41,6 @@ cmake --build build --config Release -j4
     ./build/bin/llama-server -hf ggml-org/gpt-oss-120b-GGUF -c 0 -fa --jinja --reasoning-format none --port 9500
 ```
 
-- Then, access http://localhost:8080
+- Then, access http://localhost:9000
 
 
-- For Vision + Text : Use Gemma
-
-./build/bin/llama-server -hf ggml-org/gemma-3-4b-it-GGUF --host 0.0.0.0 --port 8080 --n-gpu-layers 99 --ctx-size 8192 --alias gemma3
