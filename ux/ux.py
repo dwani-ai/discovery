@@ -60,7 +60,7 @@ def extract_single_pdf(pdf_path: str) -> str:
         with open(pdf_path, "rb") as f:
             files = {"file": (os.path.basename(pdf_path), f, "application/pdf")}
             data = {"prompt": "Extract all text from this PDF."}
-            response = requests.post(API_URL_PDF, files=files, data=data, timeout=30)
+            response = requests.post(API_URL_PDF, files=files, data=data, timeout=90)
             response.raise_for_status()
             return response.json().get('extracted_text', '')
     except requests.RequestException as e:
@@ -123,7 +123,7 @@ def process_message(history: List[Dict], message: str, pdf_files: Optional[List[
 
         # Send query to API
         data = {"prompt": message, "extracted_text": json.dumps(extracted_text)}
-        response = requests.post(API_URL_MESSAGE, data=data, timeout=30)
+        response = requests.post(API_URL_MESSAGE, data=data, timeout=90)
         response.raise_for_status()
         result = response.json()
 
