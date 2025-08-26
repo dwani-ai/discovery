@@ -180,20 +180,23 @@ async def process_message(prompt: str = Form(...), extracted_text: str = Form(..
     model = "gemma3"
     client = get_openai_client(model)
 
-    # Attempt to parse JSON, fallback to empty dict if parsing fails
+    # Attempt to parse JSON, use raw string if parsing fails
     all_results = {}
+    text_for_analysis = extracted_text
     try:
         all_results = json.loads(extracted_text)
-        if not isinstance(all_results, dict):
+        if isinstance(all_results, dict):
+            text_for_analysis = json.dumps(all_results)
+        else:
             logger.warning(f"Extracted text is not a JSON object: {extracted_text}")
             all_results = {}
     except json.JSONDecodeError as e:
-        logger.warning(f"Invalid extracted text format, ignoring JSON parsing error: {str(e)} - Input: {extracted_text}")
+        logger.warning(f"Invalid extracted text format, using as plain text: {str(e)} - Input: {extracted_text}")
         all_results = {}
 
     # Process with the provided prompt
     dwani_prompt = "You are dwani, a helpful assistant. Provide a concise response in one sentence maximum."
-    combined_prompt = f"{dwani_prompt}\nUser prompt: {prompt}\nExtracted text: {json.dumps(all_results)}"
+    combined_prompt = f"{dwani_prompt}\nUser prompt: {prompt}\nExtracted text: {text_for_analysis}"
 
     try:
         response = await client.chat.completions.create(
