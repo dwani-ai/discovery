@@ -180,14 +180,19 @@ async def process_message(prompt: str = Form(...), extracted_text: str = Form(..
     model = "gemma3"
     client = get_openai_client(model)
 
+    # Validate JSON format
     try:
         all_results = json.loads(extracted_text)
         if not isinstance(all_results, dict):
             raise ValueError("Extracted text must be a valid JSON object")
     except json.JSONDecodeError as e:
-        logger.error(f"Invalid extracted text format: {str(e)}")
-        raise HTTPException(status_code=400, detail=f"Invalid extracted text format: {str(e)}")
+        logger.error(f"Invalid extracted text format: {str(e)} - Input: {extracted_text}")
+        raise HTTPException(
+            status_code=400,
+            detail=f"Invalid extracted text format: {str(e)}. Please provide a valid JSON object."
+        )
 
+    # Process with the provided prompt
     dwani_prompt = "You are dwani, a helpful assistant. Provide a concise response in one sentence maximum."
     combined_prompt = f"{dwani_prompt}\nUser prompt: {prompt}\nExtracted text: {json.dumps(all_results)}"
 
