@@ -141,7 +141,6 @@ async def process_single_page(client, model, image, page_idx):
 
 async def render_pdf_to_png(pdf_file):
     """Convert PDF to images."""
-    # Save uploaded file temporarily
     try:
         with open("temp.pdf", "wb") as f:
             f.write(await pdf_file.read())
@@ -290,20 +289,26 @@ async def process_message(prompt: str = Form(...), extracted_text: str = Form(..
     model = "gemma3"
     client = get_openai_client(model)
 
+    # Attempt to parse JSON, use raw string if parsing fails
+    all_results = {}
+    text_for_analysis = extracted_text
     try:
         all_results = json.loads(extracted_text)
-        if not isinstance(all_results, dict):
-            raise ValueError("Extracted text must be a valid JSON object")
+        if isinstance(all_results, dict):
+            text_for_analysis = json.dumps(all_results)
+        else:
+            logger.warning(f"Extracted text is not a JSON object: {extracted_text}")
+            all_results = {}
     except json.JSONDecodeError as e:
-        logger.error(f"Invalid extracted text format: {str(e)}")
-        raise HTTPException(status_code=400, detail=f"Invalid extracted text format: {str(e)}")
+        logger.warning(f"Invalid extracted text format, using as plain text: {str(e)} - Input: {extracted_text}")
+        all_results = {}
 
     # Process with the provided prompt
     dwani_prompt = (
         "You are dwani, a helpful assistant. Provide a concise response in one sentence maximum. "
     )
 
-    combined_prompt = f"{dwani_prompt}\nUser prompt: {prompt}\nExtracted text: {json.dumps(all_results)}"
+    combined_prompt = f"{dwani_prompt}\nUser prompt: {prompt}\nExtracted text: {text_for_analysis}"
 
     try:
         response = await client.chat.completions.create(
@@ -321,35 +326,8 @@ async def process_message(prompt: str = Form(...), extracted_text: str = Form(..
     except Exception as e:
         logger.error(f"Final API request failed: {str(e)}")
         raise HTTPException(status_code=500, detail=f"Final API request failed: {str(e)}")
-    
+
 @app.get("/health")
 async def health_check():
     """Health check endpoint to verify the API and its dependencies are operational."""
-
     return {"status": "healthy", "message": "API and model connectivity are operational"}
-    '''
-    try:
-        # Test the OpenAI client connectivity for the default model
-        model = "gemma3"
-        client = get_openai_client(model)
-        
-        # Perform a simple test request to the OpenAI API
-        test_prompt = "Test connectivity"
-        response = await client.chat.completions.create(
-            model=model,
-            messages=[{"role": "user", "content": [{"type": "text", "text": test_prompt}]}],
-            temperature=0.1,
-            max_tokens=10
-        )
-        
-        # Check if the response is valid
-        if response.choices and response.choices[0].message.content:
-            return {"status": "healthy", "message": "API and model connectivity are operational"}
-        else:
-            logger.error("Health check failed: Invalid response from model")
-            raise HTTPException(status_code=503, detail="Model response invalid")
-            
-    except Exception as e:
-        logger.error(f"Health check failed: {str(e)}")
-        raise HTTPException(status_code=503, detail=f"Health check failed: {str(e)}")
-    '''
