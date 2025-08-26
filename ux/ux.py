@@ -52,21 +52,6 @@ def validate_pdf(file_path: str) -> bool:
         logger.error(f"Error accessing file {file_path}: {str(e)}")
         return False
 
-def retry_request(func, *args, retries: int = 3, delay: float = 1) -> Optional[Dict]:
-    """Retry API requests on transient failures."""
-    for attempt in range(retries):
-        try:
-            response = func(*args)
-            response.raise_for_status()
-            return response.json()
-        except requests.RequestException as e:
-            logger.warning(f"Attempt {attempt + 1}/{retries} failed: {str(e)}")
-            if attempt == retries - 1:
-                logger.error(f"All retries failed: {str(e)}")
-                return None
-            time.sleep(delay)
-    return None
-
 def extract_single_pdf(pdf_path: str) -> str:
     """Extract text from a single PDF."""
     if not validate_pdf(pdf_path):
@@ -75,12 +60,14 @@ def extract_single_pdf(pdf_path: str) -> str:
         with open(pdf_path, "rb") as f:
             files = {"file": (os.path.basename(pdf_path), f, "application/pdf")}
             data = {"prompt": "Extract all text from this PDF."}
-            result = retry_request(
-                lambda: requests.post(API_URL_PDF, files=files, data=data, timeout=30)
-            )
-            return result.get('extracted_text', '') if result else ''
-    except Exception as e:
+            response = requests.post(API_URL_PDF, files=files, data=data, timeout=30)
+            response.raise_for_status()
+            return response.json().get('extracted_text', '')
+    except requests.RequestException as e:
         logger.error(f"Failed to extract text from {pdf_path}: {str(e)}")
+        return ''
+    except Exception as e:
+        logger.error(f"Unexpected error extracting text from {pdf_path}: {str(e)}")
         return ''
 
 def extract_texts(pdf_paths: List[str], session_id: str) -> str:
@@ -136,15 +123,16 @@ def process_message(history: List[Dict], message: str, pdf_files: Optional[List[
 
         # Send query to API
         data = {"prompt": message, "extracted_text": json.dumps(extracted_text)}
-        result = retry_request(
-            lambda: requests.post(API_URL_MESSAGE, data=data, timeout=30)
-        )
-        if not result:
-            return history + [{"role": "user", "content": message}, {"role": "assistant", "content": "❌ Error: Failed to process your request. Please try again later."}], ""
+        response = requests.post(API_URL_MESSAGE, data=data, timeout=30)
+        response.raise_for_status()
+        result = response.json()
 
         return history + [{"role": "user", "content": message}, {"role": "assistant", "content": result['response']}], ""
-    except Exception as e:
+    except requests.RequestException as e:
         logger.error(f"API request failed for session {session_id}: {str(e)}")
+        return history + [{"role": "user", "content": message}, {"role": "assistant", "content": f"❌ Error: Failed to process your request. Please try again later."}], ""
+    except Exception as e:
+        logger.error(f"Unexpected error for session {session_id}: {str(e)}")
         return history + [{"role": "user", "content": message}, {"role": "assistant", "content": f"❌ Error: {str(e)}"}], ""
 
 def clear_chat(session_id: str) -> List:
@@ -168,7 +156,7 @@ def create_gradio_app() -> gr.Blocks:
     with gr.Blocks(title="dwani.ai - Discovery", css=css, fill_width=True) as demo:
         gr.Markdown("# 📄 Document Chat - Query Your PDFs")
 
-        # Generate a unique session ID (Gradio provides session_id automatically in some contexts)
+        # Generate a unique session ID
         session_id = gr.State(value=f"session_{int(time())}")
 
         with gr.Row():
@@ -196,7 +184,7 @@ def create_gradio_app() -> gr.Blocks:
             with gr.Column(scale=1):
                 gr.Markdown("### Instructions")
                 gr.Markdown(
-                    """
+                    f"""
                     1. Upload one or more PDF documents (max {MAX_FILE_SIZE_MB}MB each).  
                     2. Ask questions about the documents in the chat box.  
                     3. The assistant will respond based on the documents' content.  
