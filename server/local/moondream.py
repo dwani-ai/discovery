@@ -3,6 +3,7 @@ from PIL import Image
 
 # Load the model
 
+## TODO Check for cuda / else use CPU 
 
 model = AutoModelForCausalLM.from_pretrained(
     "vikhyatk/moondream2",
@@ -13,7 +14,7 @@ model = AutoModelForCausalLM.from_pretrained(
 
 # Load your image
 
-image = Image.open("path/to/your/image.jpg")
+image = Image.open("image.jpg")
 
 # 1. Image Captioning
 
@@ -42,7 +43,7 @@ points = model.point(image, "person")["points"]
 print(f"Found {len(points)} person(s)")
 
 
-image = Image.open("path/to/your/image.jpg")
+image = Image.open("image.jpg")
 encoded_image = model.encode_image(image)
 
 # Reuse the encoded image for each inference

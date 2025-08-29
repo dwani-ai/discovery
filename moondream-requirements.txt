@@ -5,3 +5,4 @@ pillow
 einops
 pyvips-binary 
 pyvips
+accelerate
