@@ -1,0 +1,7 @@
+moondream
+transformers
+torch 
+pillow 
+einops
+pyvips-binary 
+pyvips
