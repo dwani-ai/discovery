@@ -34,7 +34,7 @@ input_ids = torch.cat([pre_ids, img_tok, post_ids], dim=1).to(model.device)
 attention_mask = torch.ones_like(input_ids, device=model.device)
 
 # Preprocess image via the model's own processor
-img = Image.open("test-2.jpg").convert("RGB")
+img = Image.open("image.jpg").convert("RGB")
 px = model.get_vision_tower().image_processor(images=img, return_tensors="pt")["pixel_values"]
 px = px.to(model.device, dtype=model.dtype)
 
