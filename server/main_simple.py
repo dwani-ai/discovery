@@ -9,9 +9,9 @@ from pdf2image import convert_from_path
 import os
 import asyncio
 import re
-from typing import List, Dict, Optional
-import time
+from typing import Optional
 from starlette.middleware.base import BaseHTTPMiddleware
+import time
 
 # Set up logging
 logging.basicConfig(level=logging.INFO)
@@ -22,14 +22,12 @@ app = FastAPI(title="Dwani PDF Processing API")
 # Middleware to measure request processing time
 class TimingMiddleware(BaseHTTPMiddleware):
     async def dispatch(self, request: Request, call_next):
-        start_time = time.time()  # Record start time
-        response = await call_next(request)  # Process the request
-        end_time = time.time()  # Record end time
-        processing_time = end_time - start_time  # Calculate processing time
+        start_time = time.time()
+        response = await call_next(request)
+        processing_time = time.time() - start_time
         logger.info(f"Request: {request.method} {request.url.path} took {processing_time:.3f} seconds")
         return response
 
-# Add the middleware to the FastAPI app
 app.add_middleware(TimingMiddleware)
 
 vlm_base_url = os.getenv('VLLM_IP', "0.0.0.0")
@@ -44,10 +42,7 @@ def get_openai_client(model: str) -> AsyncOpenAI:
     if model not in valid_models:
         raise ValueError(f"Invalid model: {model}. Choose from: {', '.join(valid_models)}")
     
-    model_ports = {
-        "gemma3": "9000",
-        "gpt-oss": "9500",
-    }
+    model_ports = {"gemma3": "9000", "gpt-oss": "9500"}
     base_url = f"http://{vlm_base_url}:{model_ports[model]}/v1"
     return AsyncOpenAI(api_key="http", base_url=base_url)
 
@@ -58,85 +53,51 @@ def clean_response(raw_response: str) -> Optional[str]:
     cleaned = re.sub(r'```(?:json)?\s*([\s\S]*?)\s*```', r'\1', raw_response)
     return cleaned.strip()
 
-async def process_single_batch(client, model, batch_messages, batch_start, batch_end):
-    """Process a single batch of pages asynchronously."""
-    try:
-        response = await client.chat.completions.create(
-            model=model,
-            messages=[{"role": "user", "content": batch_messages}],
-            temperature=0.2,
-            max_tokens=29695
-        )
-        raw_response = response.choices[0].message.content
-        logger.debug(f"Raw response for batch {batch_start}-{batch_end-1}: {raw_response}")
-
-        cleaned_response = clean_response(raw_response)
-        if not cleaned_response:
-            logger.warning(f"Empty response for batch {batch_start}-{batch_end-1}")
-            return None, list(range(batch_start, batch_end))
-
-        try:
-            batch_results = json.loads(cleaned_response)
-            if not isinstance(batch_results, dict):
-                logger.warning(f"Response is not a JSON object for batch {batch_start}-{batch_end-1}")
-                return None, list(range(batch_start, batch_end))
-            return batch_results, []
-        except json.JSONDecodeError as e:
-            logger.error(f"JSON parsing failed for batch {batch_start}-{batch_end-1}: {str(e)}")
-            return None, list(range(batch_start, batch_end))
-    except Exception as e:
-        logger.error(f"API request failed for batch {batch_start}-{batch_end-1}: {str(e)}")
-        return None, list(range(batch_start, batch_end))
-
 async def process_single_page(client, model, image, page_idx):
-    """Process a single skipped page asynchronously."""
+    """Process a single PDF page asynchronously."""
     try:
         image_bytes_io = BytesIO()
         image.save(image_bytes_io, format='JPEG', quality=85)
         image_bytes_io.seek(0)
         image_base64 = encode_image(image_bytes_io)
         
-        single_message = [
-            {
-                "type": "image_url",
-                "image_url": {"url": f"data:image/jpeg;base64,{image_base64}"}
-            },
+        message = [
+            {"type": "image_url", "image_url": {"url": f"data:image/jpeg;base64,{image_base64}"}},
             {
                 "type": "text",
                 "text": (
-                    f"Extract plain text from this single PDF page (page number {page_idx}). "
-                    "Return the result as a valid JSON object where the key is the page number "
-                    f"({page_idx}) and the value is the extracted text. "
-                    "Ensure the response is strictly JSON-formatted and does not include markdown code blocks."
+                    f"Extract plain text from this PDF page (page {page_idx}). "
+                    f"Return the result as a JSON object with the key as page number ({page_idx}) "
+                    "and the value as the extracted text. Ensure JSON format."
                 )
             }
         ]
         
         response = await client.chat.completions.create(
             model=model,
-            messages=[{"role": "user", "content": single_message}],
+            messages=[{"role": "user", "content": message}],
             temperature=0.2,
             max_tokens=29695
         )
         raw_response = response.choices[0].message.content
-        logger.debug(f"Raw response for skipped page {page_idx}: {raw_response}")
+        logger.debug(f"Raw response for page {page_idx}: {raw_response}")
 
         cleaned_response = clean_response(raw_response)
         if not cleaned_response:
-            logger.warning(f"Empty response for skipped page {page_idx}")
+            logger.warning(f"Empty response for page {page_idx}")
             return None, page_idx
 
         try:
             page_result = json.loads(cleaned_response)
             if not isinstance(page_result, dict) or str(page_idx) not in page_result:
-                logger.warning(f"Invalid JSON for skipped page {page_idx}")
+                logger.warning(f"Invalid JSON for page {page_idx}")
                 return None, page_idx
             return page_result, None
         except json.JSONDecodeError as e:
-            logger.error(f"JSON parsing failed for skipped page {page_idx}: {str(e)}")
+            logger.error(f"JSON parsing failed for page {page_idx}: {str(e)}")
             return None, page_idx
     except Exception as e:
-        logger.error(f"Failed to process skipped page {page_idx}: {str(e)}")
+        logger.error(f"Failed to process page {page_idx}: {str(e)}")
         return None, page_idx
 
 async def render_pdf_to_png(pdf_file):
@@ -151,7 +112,6 @@ async def render_pdf_to_png(pdf_file):
     finally:
         if os.path.exists("temp.pdf"):
             os.remove("temp.pdf")
-
     return images
 
 @app.post("/process_pdf")
@@ -163,84 +123,18 @@ async def process_pdf(file: UploadFile = File(...), prompt: str = Form(...)):
         raise HTTPException(status_code=400, detail="Please provide a non-empty prompt")
 
     images = await render_pdf_to_png(file)
-
-    num_pages = len(images)
     all_results = {}
     skipped_pages = []
-    batch_size = 5
     model = "gemma3"
     client = get_openai_client(model)
 
-    # Process batches concurrently
-    batch_tasks = []
-    for batch_start in range(0, num_pages, batch_size):
-        batch_end = min(batch_start + batch_size, num_pages)
-        batch_images = images[batch_start:batch_end]
-        batch_messages = []
-
-        for i, image in enumerate(batch_images, start=batch_start):
-            try:
-                image_bytes_io = BytesIO()
-                image.save(image_bytes_io, format='JPEG', quality=85)
-                image_bytes_io.seek(0)
-                image_base64 = encode_image(image_bytes_io)
-                batch_messages.append({
-                    "type": "image_url",
-                    "image_url": {"url": f"data:image/jpeg;base64,{image_base64}"}
-                })
-            except Exception as e:
-                logger.error(f"Image processing failed for page {i}: {str(e)}")
-                skipped_pages.append(i)
-                continue
-
-        if not batch_messages:
-            logger.warning(f"Skipping batch {batch_start}-{batch_end-1}: No valid images")
-            skipped_pages.extend(range(batch_start, batch_end))
-            continue
-
-        batch_messages.append({
-            "type": "text",
-            "text": (
-                f"Extract plain text from these {batch_end - batch_start} PDF pages. "
-                "Return the results as a valid JSON object where keys are page numbers "
-                f"(starting from {batch_start}) and values are the extracted text for each page. "
-                "Ensure the response is strictly JSON-formatted."
-            )
-        })
-
-        batch_tasks.append(process_single_batch(client, model, batch_messages, batch_start, batch_end))
-
-    batch_results = await asyncio.gather(*batch_tasks, return_exceptions=True)
-
-    for batch_result in batch_results:
-        if isinstance(batch_result, Exception):
-            logger.error(f"Batch processing failed: {str(batch_result)}")
-            continue
-        batch_data, batch_skipped = batch_result
-        if batch_data:
-            all_results.update(batch_data)
-        if batch_skipped:
-            skipped_pages.extend(batch_skipped)
-
-    # Retry skipped pages
-    retry_tasks = []
-    remaining_skipped = list(set(skipped_pages))
-    for page_idx in remaining_skipped:
-        retry_tasks.append(process_single_page(client, model, images[page_idx], page_idx))
-
-    retry_results = await asyncio.gather(*retry_tasks, return_exceptions=True)
-    successfully_processed = []
-
-    for retry_result in retry_results:
-        if isinstance(retry_result, Exception):
-            logger.error(f"Retry processing failed: {str(retry_result)}")
-            continue
-        page_result, page_idx = retry_result
+    # Process each page sequentially
+    for page_idx, image in enumerate(images):
+        page_result, skipped_idx = await process_single_page(client, model, image, page_idx)
         if page_result:
             all_results.update(page_result)
-            successfully_processed.append(page_idx)
-
-    skipped_pages = [p for p in skipped_pages if p not in successfully_processed]
+        if skipped_idx is not None:
+            skipped_pages.append(skipped_idx)
 
     if not all_results and skipped_pages:
         return JSONResponse(
@@ -249,10 +143,7 @@ async def process_pdf(file: UploadFile = File(...), prompt: str = Form(...)):
         )
 
     # Process with the provided prompt
-    dwani_prompt = (
-        "You are dwani, a helpful assistant. Provide a concise response in one sentence maximum. "
-    )
-
+    dwani_prompt = "You are dwani, a helpful assistant. Provide a concise response in one sentence maximum."
     try:
         results_str = json.dumps(all_results)
     except Exception as e:
@@ -304,10 +195,7 @@ async def process_message(prompt: str = Form(...), extracted_text: str = Form(..
         all_results = {}
 
     # Process with the provided prompt
-    dwani_prompt = (
-        "You are dwani, a helpful assistant. Provide a concise response in one sentence maximum. "
-    )
-
+    dwani_prompt = "You are dwani, a helpful assistant. Provide a concise response in one sentence maximum."
     combined_prompt = f"{dwani_prompt}\nUser prompt: {prompt}\nExtracted text: {text_for_analysis}"
 
     try:
@@ -329,5 +217,5 @@ async def process_message(prompt: str = Form(...), extracted_text: str = Form(..
 
 @app.get("/health")
 async def health_check():
-    """Health check endpoint to verify the API and its dependencies are operational."""
-    return {"status": "healthy", "message": "API and model connectivity are operational"}
+    """Health check endpoint to verify API is operational."""
+    return {"status": "healthy", "message": "API is operational"}

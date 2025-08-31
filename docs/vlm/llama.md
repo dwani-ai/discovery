@@ -25,6 +25,12 @@ cmake -B build
 cmake --build build --config Release -j4
 ```
 
+
+- For Vision + Text : Use Gemma
+
+./build/bin/llama-server -hf ggml-org/gemma-3-4b-it-GGUF --host 0.0.0.0 --port 9000 --n-gpu-layers 99 --ctx-size 8192 --alias gemma3 
+
+
 - For Laptop / PC -  gpt-oss-20b
 ```bash
 ./build/bin/llama-server -hf ggml-org/gpt-oss-20b-GGUF -c 0 -fa --jinja --reasoning-format none --port 9500
@@ -35,27 +41,6 @@ cmake --build build --config Release -j4
     ./build/bin/llama-server -hf ggml-org/gpt-oss-120b-GGUF -c 0 -fa --jinja --reasoning-format none --port 9500
 ```
 
-- Then, access http://localhost:8080
-
-
-- Reference 
-  - https://blogs.nvidia.com/blog/rtx-ai-garage-openai-oss/
-  - HF model repo - https://huggingface.co/collections/ggml-org/gpt-oss-68923b60bee37414546c70bf
-
-
-
-To Run - gemma
- ./build/bin/llama-server \
-    --hf-repo unsloth/gemma-3-4b-it-GGUF \
-    --hf-file gemma-3-4b-it-Q4_K_M.gguf
-
-./build/bin/llama-server \
-    --hf-repo unsloth/gemma-3-4b-it-GGUF \
-    --hf-file mmproj-BF16.gguf
-
-
-./build/bin/llama-server     --hf-repo unsloth/gemma-3-4b-it-GGUF     --hf-file gemma-3-4b-it-Q4_K_M.gguf --port 9500 --host 0.0.0.0
-
-./build/bin/llama-server     --hf-repo ggml-org/gemma-3-12b-it-GGUF
+- Then, access http://localhost:9000
 
 
