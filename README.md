@@ -36,6 +36,3 @@ uvicorn server.main:app --host 0.0.0.0 --port 18889
 
 - Docker build steps - [docs/build_docker.md](docs/build_docker.md)
 
-- sudo apt install gunicorn
-gunicorn -w 4 -k uvicorn.workers.UvicornWorker app:main
-

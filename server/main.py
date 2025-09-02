@@ -32,7 +32,7 @@ class TimingMiddleware(BaseHTTPMiddleware):
 # Add the middleware to the FastAPI app
 app.add_middleware(TimingMiddleware)
 
-vlm_base_url = os.getenv('VLLM_IP', "0.0.0.0")
+dwani_api_base_url = os.getenv('DWANI_API_BASE_URL', "0.0.0.0")
 
 def encode_image(image: BytesIO) -> str:
     """Encode image bytes to base64 string."""
@@ -48,7 +48,7 @@ def get_openai_client(model: str) -> AsyncOpenAI:
         "gemma3": "9000",
         "gpt-oss": "9500",
     }
-    base_url = f"http://{vlm_base_url}:{model_ports[model]}/v1"
+    base_url = f"http://{dwani_api_base_url}:{model_ports[model]}/v1"
     return AsyncOpenAI(api_key="http", base_url=base_url)
 
 def clean_response(raw_response: str) -> Optional[str]:

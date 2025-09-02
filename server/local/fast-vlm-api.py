@@ -8,7 +8,7 @@ import io
 app = FastAPI()
 
 # Model setup (load once at startup)
-MID = "apple/FastVLM-0.5B"
+MID = "apple/FastVLM-1.5B"
 IMAGE_TOKEN_INDEX = -200
 
 tok = AutoTokenizer.from_pretrained(MID, trust_remote_code=True)
@@ -59,7 +59,7 @@ async def describe_image(file: UploadFile = File(...)):
                 inputs=input_ids,
                 attention_mask=attention_mask,
                 images=px,
-                max_new_tokens=128,
+                max_new_tokens=600,
             )
         
         description = tok.decode(out[0], skip_special_tokens=True)
