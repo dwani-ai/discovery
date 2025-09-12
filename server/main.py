@@ -45,7 +45,7 @@ def get_openai_client(model: str) -> AsyncOpenAI:
         raise ValueError(f"Invalid model: {model}. Choose from: {', '.join(valid_models)}")
     
     model_ports = {
-        "gemma3": "9000",
+        "gemma3": "18888",
         "gpt-oss": "9500",
     }
     base_url = f"http://{dwani_api_base_url}:{model_ports[model]}/v1"
