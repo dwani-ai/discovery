@@ -11,3 +11,9 @@ python.exe -m venv venv
 
 pip.exe install -r server-requirements.txt
 
+
+---
+As - powershell admin
+choco install poppler
+
+
