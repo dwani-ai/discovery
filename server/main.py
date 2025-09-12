@@ -45,7 +45,7 @@ def get_openai_client(model: str) -> AsyncOpenAI:
         raise ValueError(f"Invalid model: {model}. Choose from: {', '.join(valid_models)}")
     
     model_ports = {
-        "gemma3": "18888",
+        "gemma3": "9000",
         "gpt-oss": "9500",
     }
     base_url = f"http://{dwani_api_base_url}:{model_ports[model]}/v1"
@@ -65,7 +65,7 @@ async def process_single_batch(client, model, batch_messages, batch_start, batch
             model=model,
             messages=[{"role": "user", "content": batch_messages}],
             temperature=0.2,
-            max_tokens=29695
+            max_tokens=2024
         )
         raw_response = response.choices[0].message.content
         logger.debug(f"Raw response for batch {batch_start}-{batch_end-1}: {raw_response}")
@@ -116,7 +116,7 @@ async def process_single_page(client, model, image, page_idx):
             model=model,
             messages=[{"role": "user", "content": single_message}],
             temperature=0.2,
-            max_tokens=29695
+            max_tokens=2048
         )
         raw_response = response.choices[0].message.content
         logger.debug(f"Raw response for skipped page {page_idx}: {raw_response}")
@@ -266,7 +266,7 @@ async def process_pdf(file: UploadFile = File(...), prompt: str = Form(...)):
             model=model,
             messages=[{"role": "user", "content": [{"type": "text", "text": combined_prompt}]}],
             temperature=0.3,
-            max_tokens=29695
+            max_tokens=2048
         )
         generated_response = response.choices[0].message.content
         return {
@@ -315,7 +315,7 @@ async def process_message(prompt: str = Form(...), extracted_text: str = Form(..
             model=model,
             messages=[{"role": "user", "content": [{"type": "text", "text": combined_prompt}]}],
             temperature=0.3,
-            max_tokens=29695
+            max_tokens=2048
         )
         generated_response = response.choices[0].message.content
         return {

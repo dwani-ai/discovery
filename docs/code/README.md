@@ -17,3 +17,9 @@
 
     - ./build/bin/llama-server -hf ggml-org/gpt-oss-20b-GGUF -c 0 -fa --jinja --reasoning-format none --port 9500 -ngl 99
 
+
+./build/bin/llama-server -hf ggml-org/Qwen2.5-VL-3B-Instruct-GGUF --host 0.0.0.0 --port 9000 --n-gpu-layers 99 --ctx-size 8192 --alias gemma3
+
+
+
+ggml-org/Qwen2.5-VL-3B-Instruct-GGUF

@@ -20,7 +20,7 @@ python ux/ux.py
 ```
 - Server
 ```bash    
-export VLLM_IP="your_vllm_ip"
+export DWANI_API_BASE_URL="your_DWANI_API_BASE_URL_ip"
 uvicorn server.main:app --host 0.0.0.0 --port 18889
 ```
 
