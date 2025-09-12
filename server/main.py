@@ -12,24 +12,62 @@ import re
 from typing import List, Dict, Optional
 import time
 from starlette.middleware.base import BaseHTTPMiddleware
+from uuid import uuid4
 
 # Set up logging
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
+
+# Simple file-based session store
+class Store:
+    def __init__(self, file_path="sessions.json"):
+        self.file_path = file_path
+        self.data = self.load()
+
+    def load(self):
+        if os.path.exists(self.file_path):
+            try:
+                with open(self.file_path, 'r') as f:
+                    return json.load(f)
+            except (json.JSONDecodeError, IOError) as e:
+                logger.error(f"Failed to load session store: {str(e)}")
+                return {}
+        return {}
+
+    def get(self, key, default=None):
+        keys = key.split('.')
+        data = self.data
+        for k in keys:
+            data = data.get(k, {})
+        return data if data != {} else default
+
+    def set(self, key, value):
+        keys = key.split('.')
+        data = self.data
+        for k in keys[:-1]:
+            data = data.setdefault(k, {})
+        data[keys[-1]] = value
+        try:
+            with open(self.file_path, 'w') as f:
+                json.dump(self.data, f, indent=2)
+        except IOError as e:
+            logger.error(f"Failed to save session store: {str(e)}")
+
+# Initialize session storage
+session_store = Store()
 
 app = FastAPI(title="Dwani PDF Processing API")
 
 # Middleware to measure request processing time
 class TimingMiddleware(BaseHTTPMiddleware):
     async def dispatch(self, request: Request, call_next):
-        start_time = time.time()  # Record start time
-        response = await call_next(request)  # Process the request
-        end_time = time.time()  # Record end time
-        processing_time = end_time - start_time  # Calculate processing time
+        start_time = time.time()
+        response = await call_next(request)
+        end_time = time.time()
+        processing_time = end_time - start_time
         logger.info(f"Request: {request.method} {request.url.path} took {processing_time:.3f} seconds")
         return response
 
-# Add the middleware to the FastAPI app
 app.add_middleware(TimingMiddleware)
 
 dwani_api_base_url = os.getenv('DWANI_API_BASE_URL', "0.0.0.0")
@@ -155,7 +193,7 @@ async def render_pdf_to_png(pdf_file):
     return images
 
 @app.post("/process_pdf")
-async def process_pdf(file: UploadFile = File(...), prompt: str = Form(...)):
+async def process_pdf(file: UploadFile = File(...), prompt: str = Form(...), sessionId: str = Form(None), model: str = Form(default="gemma3")):
     """Endpoint to process PDF and extract text based on prompt."""
     if not file:
         raise HTTPException(status_code=400, detail="Please upload a PDF file")
@@ -163,15 +201,17 @@ async def process_pdf(file: UploadFile = File(...), prompt: str = Form(...)):
         raise HTTPException(status_code=400, detail="Please provide a non-empty prompt")
 
     images = await render_pdf_to_png(file)
-
     num_pages = len(images)
     all_results = {}
     skipped_pages = []
     batch_size = 5
-    model = "gemma3"
-    client = get_openai_client(model)
 
-    # Process batches concurrently
+    try:
+        client = get_openai_client(model)
+    except ValueError as e:
+        logger.error(f"Invalid model: {str(e)}")
+        raise HTTPException(status_code=400, detail=str(e))
+
     batch_tasks = []
     for batch_start in range(0, num_pages, batch_size):
         batch_end = min(batch_start + batch_size, num_pages)
@@ -222,7 +262,6 @@ async def process_pdf(file: UploadFile = File(...), prompt: str = Form(...)):
         if batch_skipped:
             skipped_pages.extend(batch_skipped)
 
-    # Retry skipped pages
     retry_tasks = []
     remaining_skipped = list(set(skipped_pages))
     for page_idx in remaining_skipped:
@@ -244,11 +283,10 @@ async def process_pdf(file: UploadFile = File(...), prompt: str = Form(...)):
 
     if not all_results and skipped_pages:
         return JSONResponse(
-            content={"error": "No valid text extracted from any pages", "skipped_pages": skipped_pages},
+            content={"error": "No valid text extracted from any pages", "skipped_pages": skipped_pages, "sessionId": sessionId},
             status_code=400
         )
 
-    # Process with the provided prompt
     dwani_prompt = (
         "You are dwani, a helpful assistant. Provide a concise response in one sentence maximum. "
     )
@@ -261,6 +299,11 @@ async def process_pdf(file: UploadFile = File(...), prompt: str = Form(...)):
 
     combined_prompt = f"{dwani_prompt}\nUser prompt: {prompt}\nExtracted text: {results_str}"
 
+    session_id = sessionId if sessionId else f"session_{int(time.time())}_{str(uuid4())}"
+    session_data = session_store.get(f"sessions.{session_id}", {"chatHistory": []})
+    chat_history = session_data.get("chatHistory", [])
+    chat_history.append({"role": "user", "content": prompt})
+
     try:
         response = await client.chat.completions.create(
             model=model,
@@ -269,27 +312,45 @@ async def process_pdf(file: UploadFile = File(...), prompt: str = Form(...)):
             max_tokens=2048
         )
         generated_response = response.choices[0].message.content
+        chat_history.append({"role": "assistant", "content": generated_response})
+        session_store.set(f"sessions.{session_id}", {
+            "chatHistory": chat_history,
+            "timestamp": time.time()
+        })
         return {
             "response": generated_response,
             "extracted_text": all_results,
-            "skipped_pages": skipped_pages
+            "skipped_pages": skipped_pages,
+            "sessionId": session_id
         }
     except Exception as e:
         logger.error(f"Final API request failed: {str(e)}")
+        chat_history.append({"role": "assistant", "content": f"⚠️ Error processing question: {str(e)}"})
+        session_store.set(f"sessions.{session_id}", {
+            "chatHistory": chat_history,
+            "timestamp": time.time()
+        })
         raise HTTPException(status_code=500, detail=f"Final API request failed: {str(e)}")
 
 @app.post("/process_message")
-async def process_message(prompt: str = Form(...), extracted_text: str = Form(...)):
-    """Endpoint to process a query using extracted text."""
+async def process_message(
+    prompt: str = Form(...),
+    extracted_text: str = Form(...),
+    sessionId: str = Form(None),
+    model: str = Form(default="gemma3")
+):
+    """Endpoint to process a query using extracted text, with session support for Electron app."""
     if not prompt.strip():
         raise HTTPException(status_code=400, detail="Please provide a non-empty prompt")
     if not extracted_text.strip():
         raise HTTPException(status_code=400, detail="Please provide non-empty extracted text")
 
-    model = "gemma3"
-    client = get_openai_client(model)
+    try:
+        client = get_openai_client(model)
+    except ValueError as e:
+        logger.error(f"Invalid model: {str(e)}")
+        raise HTTPException(status_code=400, detail=str(e))
 
-    # Attempt to parse JSON, use raw string if parsing fails
     all_results = {}
     text_for_analysis = extracted_text
     try:
@@ -303,12 +364,15 @@ async def process_message(prompt: str = Form(...), extracted_text: str = Form(..
         logger.warning(f"Invalid extracted text format, using as plain text: {str(e)} - Input: {extracted_text}")
         all_results = {}
 
-    # Process with the provided prompt
     dwani_prompt = (
         "You are dwani, a helpful assistant. Provide a concise response in one sentence maximum. "
     )
-
     combined_prompt = f"{dwani_prompt}\nUser prompt: {prompt}\nExtracted text: {text_for_analysis}"
+
+    session_id = sessionId if sessionId else f"session_{int(time.time())}_{str(uuid4())}"
+    session_data = session_store.get(f"sessions.{session_id}", {"chatHistory": []})
+    chat_history = session_data.get("chatHistory", [])
+    chat_history.append({"role": "user", "content": prompt})
 
     try:
         response = await client.chat.completions.create(
@@ -318,13 +382,24 @@ async def process_message(prompt: str = Form(...), extracted_text: str = Form(..
             max_tokens=2048
         )
         generated_response = response.choices[0].message.content
+        chat_history.append({"role": "assistant", "content": generated_response})
+        session_store.set(f"sessions.{session_id}", {
+            "chatHistory": chat_history,
+            "timestamp": time.time()
+        })
         return {
             "response": generated_response,
             "extracted_text": all_results,
-            "skipped_pages": []
+            "skipped_pages": [],
+            "sessionId": session_id
         }
     except Exception as e:
-        logger.error(f"Final API request failed: {str(e)}")
+        logger.error(f"Final API request failed for session {session_id}: {str(e)}")
+        chat_history.append({"role": "assistant", "content": f"⚠️ Error processing question: {str(e)}"})
+        session_store.set(f"sessions.{session_id}", {
+            "chatHistory": chat_history,
+            "timestamp": time.time()
+        })
         raise HTTPException(status_code=500, detail=f"Final API request failed: {str(e)}")
 
 @app.get("/health")
