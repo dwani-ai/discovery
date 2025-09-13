@@ -17,3 +17,20 @@ As - powershell admin
 choco install poppler
 
 
+Add to PATH
+C:\ProgramData\chocolatey\lib\poppler\tools
+
+
+---
+
+Install Docker desktop
+
+as powershell admin
+wsl --update
+
+
+---
+
+Install cuda toolkit for windows
+
+
