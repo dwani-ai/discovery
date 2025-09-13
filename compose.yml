@@ -1,0 +1,19 @@
+services:
+  app:
+    image: dwani/discovery_server:latest
+    ports:
+      - "18889:18889"
+    environment:
+      - PYTHONDONTWRITEBYTECODE=1
+      - PYTHONUNBUFFERED=1
+      - DWANI_API_BASE_URL=0.0.0.0
+    volumes:
+      - app-data:/data
+    networks:
+      - app-network
+volumes:
+  app-data:
+
+networks:
+  app-network:
+    driver: bridge
