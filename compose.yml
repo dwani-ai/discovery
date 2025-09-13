@@ -6,21 +6,23 @@ services:
     environment:
       - PYTHONDONTWRITEBYTECODE=1
       - PYTHONUNBUFFERED=1
-      - DWANI_API_BASE_URL=host.docker.internal
+      - DWANI_API_BASE_URL=http://llama:8080  # Updated to point to the llama service internally
     volumes:
       - app-data:/data
     networks:
       - app-network
+    depends_on:
+      - llama  # Ensures llama service starts before app
   llama:
     image: ghcr.io/ggml-org/llama.cpp:server-cuda
     ports:
-      - "9000:8000"
+      - "9000:8080"  # Maps internal port 8080 to host port 9000
     environment:
       - CUDA_VISIBLE_DEVICES=0
       - LLAMA_ARG_N_GPU_LAYERS=999
-      - LLAMA_ARG_MODEL=/models/gemma-3-4b-it-qat-q4_0-gguf
+      - LLAMA_ARG_MODEL=/models/ggml-org_gemma-3-4b-it-GGUF_gemma-3-4b-it-Q4_K_M.gguf
     volumes:
-      - llama-data:/models
+      - ./models:/models
     deploy:
       resources:
         reservations:
@@ -32,8 +34,6 @@ services:
 
 volumes:
   app-data:
-  llama-data:
-
 networks:
   app-network:
     driver: bridge

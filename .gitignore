@@ -3,6 +3,7 @@ python/reconaissance/ollama/
 python/ollama
 output.wav
 src/ollama
+models/
 pyautogenvenv/
 venv/
 venv_2
