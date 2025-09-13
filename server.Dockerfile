@@ -47,8 +47,9 @@ RUN adduser -D appuser \
     && mkdir -p /data \
     && chown -R appuser:appuser /app /data
 
+RUN pip install uvicorn
 USER appuser
 EXPOSE 80
 
 # Command to run the Gradio program
-CMD ["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "18888"]
+CMD ["uvicorn", "server.main:app", "--host", "0.0.0.0", "--port", "18889"]
