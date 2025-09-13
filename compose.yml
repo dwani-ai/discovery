@@ -1,3 +1,5 @@
+version: '3.8'
+
 services:
   app:
     image: dwani/discovery_server:latest
@@ -6,11 +8,12 @@ services:
     environment:
       - PYTHONDONTWRITEBYTECODE=1
       - PYTHONUNBUFFERED=1
-      - DWANI_API_BASE_URL=0.0.0.0
+      - DWANI_API_BASE_URL=host.docker.internal
     volumes:
       - app-data:/data
     networks:
       - app-network
+
 volumes:
   app-data:
 
