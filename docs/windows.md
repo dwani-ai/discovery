@@ -29,8 +29,9 @@ as powershell admin
 wsl --update
 
  docker build -t dwani/discovery_server:latest -f server.Dockerfile .
-docker run -p 18889:18889 --env DWANI_API_BASE_URL=0.0.0.0 dwani/discovery_server:latest
+//docker run -p 18889:18889 --env DWANI_API_BASE_URL=0.0.0.0 dwani/discovery_server:latest
 
+docker-compose.exe up -d
 
 ---
 
