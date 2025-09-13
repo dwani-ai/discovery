@@ -11,13 +11,14 @@ services:
       - app-data:/data
     networks:
       - app-network
-
   llama:
-    image: ghcr.io/ggerganov/llama.cpp:server-cuda
+    image: ghcr.io/ggml-org/llama.cpp:server-cuda
     ports:
-      - "9000:9000"
+      - "9000:8000"
     environment:
       - CUDA_VISIBLE_DEVICES=0
+      - LLAMA_ARG_N_GPU_LAYERS=999
+      - LLAMA_ARG_MODEL=/models/gemma-3-4b-it-qat-q4_0-gguf
     volumes:
       - llama-data:/models
     deploy:
