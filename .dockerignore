@@ -3,7 +3,9 @@ samples
 *.log
 venv
 *.nemo
-
+*.json
+.github
+.devcontainer
 docs 
 misc
 samples
@@ -11,7 +13,7 @@ samples
 *.pyc
 *.pyo
 *.pyd
-
+models/
 # Ignore all virtual environments
 venv/
 env/
