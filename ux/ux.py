@@ -18,9 +18,9 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 # Configuration
-VLLM_IP = os.getenv('VLLM_IP', '0.0.0.0')
-API_URL_PDF = f"http://{VLLM_IP}:18889/process_pdf"
-API_URL_MESSAGE = f"http://{VLLM_IP}:18889/process_message"
+DWANI_API_BASE_URL = os.getenv('DWANI_API_BASE_URL', '0.0.0.0')
+API_URL_PDF = f"http://{DWANI_API_BASE_URL}:18889/process_pdf"
+API_URL_MESSAGE = f"http://{DWANI_API_BASE_URL}:18889/process_message"
 MAX_FILE_SIZE_MB = 10  # Max PDF size in MB
 MAX_CONCURRENT_PDFS = 5  # Max PDFs to process concurrently
 CACHE_TTL = 3600  # Cache extracted text for 1 hour
@@ -28,13 +28,13 @@ SESSION_CACHE = {}  # In-memory session cache: {session_id: {pdf_hash: extracted
 
 def validate_config() -> None:
     """Validate environment configuration at startup."""
-    if VLLM_IP == '0.0.0.0':
-        logger.warning("VLLM_IP not set, using default '0.0.0.0'. This may cause issues in production.")
+    if DWANI_API_BASE_URL == '0.0.0.0':
+        logger.warning("DWANI_API_BASE_URL not set, using default '0.0.0.0'. This may cause issues in production.")
     try:
-        response = requests.get(f"http://{VLLM_IP}:18889/health", timeout=30)
+        response = requests.get(f"http://{DWANI_API_BASE_URL}:18889/health", timeout=30)
         response.raise_for_status()
     except requests.RequestException as e:
-        logger.error(f"Failed to connect to API server at {VLLM_IP}: {str(e)}")
+        logger.error(f"Failed to connect to API server at {DWANI_API_BASE_URL}: {str(e)}")
         raise
 
 def validate_pdf(file_path: str) -> bool:
