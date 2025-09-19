@@ -76,26 +76,21 @@ def extract_texts(pdf_paths: List[str], session_id: str) -> str:
     if not valid_paths:
         return "No valid PDFs provided."
 
-    # Generate cache key based on PDF paths
     pdf_hash = hashlib.md5("".join(sorted(valid_paths)).encode()).hexdigest()
     session_data = SESSION_CACHE.get(session_id, {})
     cached = session_data.get('cache', {}).get(pdf_hash)
 
-    # Check cache and TTL
     if cached and (time() - session_data.get('timestamp', 0)) < CACHE_TTL:
         logger.info(f"Returning cached text for session {session_id}")
         return cached['text']
 
-    # Extract texts in parallel
     with concurrent.futures.ThreadPoolExecutor(max_workers=min(len(valid_paths), MAX_CONCURRENT_PDFS)) as executor:
         texts = list(executor.map(extract_single_pdf, valid_paths))
 
-    # Combine texts
     combined = "\n\n---\n\n".join(
         [f"Text from {os.path.basename(path)}:\n{text}" for path, text in zip(valid_paths, texts) if text]
     )
 
-    # Update cache
     SESSION_CACHE[session_id] = {
         'cache': {pdf_hash: {'text': combined, 'timestamp': time()}},
         'timestamp': time(),
@@ -108,7 +103,6 @@ def process_message(history: List[Dict], message: str, pdf_files: Optional[List[
     pdf_files = pdf_files or []
     current_paths = sorted(pdf_files)
 
-    # Validate input
     if not message.strip():
         return history + [{"role": "user", "content": message}, {"role": "assistant", "content": "⚠️ Please enter a valid question!"}], ""
 
@@ -116,12 +110,10 @@ def process_message(history: List[Dict], message: str, pdf_files: Optional[List[
         return history + [{"role": "user", "content": message}, {"role": "assistant", "content": "⚠️ Please upload at least one PDF first!"}], ""
 
     try:
-        # Extract or retrieve cached text
         extracted_text = extract_texts(current_paths, session_id)
         if not extracted_text:
             return history + [{"role": "user", "content": message}, {"role": "assistant", "content": "⚠️ No text could be extracted from the provided PDFs!"}], ""
 
-        # Send query to API
         data = {"prompt": message, "extracted_text": json.dumps(extracted_text)}
         response = requests.post(API_URL_MESSAGE, data=data, timeout=90)
         response.raise_for_status()
@@ -144,7 +136,7 @@ def new_chat(session_id: str) -> Tuple[List, None]:
     SESSION_CACHE.pop(session_id, None)
     return [], None
 
-# Custom styling
+# Custom styling with favicon and SEO meta tags
 css = """
 .gradio-container { max-width: 1200px; margin: auto; }
 #chatbot { height: calc(100vh - 200px); max-height: 800px; }
@@ -152,11 +144,35 @@ css = """
 """
 
 def create_gradio_app() -> gr.Blocks:
-    """Create and configure the Gradio application."""
-    with gr.Blocks(title="dwani.ai - Discovery", css=css, fill_width=True) as demo:
+    """Create and configure the Gradio application with favicon and SEO."""
+    # Define favicon path (assumes favicon.ico is in the same directory)
+    favicon_path = os.path.join(os.path.dirname(__file__), "favicon.ico")
+
+    # SEO meta tags
+    head_tags = """
+    <meta name="description" content="Document Chat - Query and interact with your PDF documents using AI-powered analysis">
+    <meta name="keywords" content="PDF chat, document analysis, AI document query, PDF text extraction">
+    <meta name="author" content="dwani.ai">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta charset="UTF-8">
+    <link rel="canonical" href="https://www.dwani.ai">
+    <meta name="robots" content="index, follow">
+    <meta property="og:title" content="dwani.ai - Document Chat">
+    <meta property="og:description" content="Interact with your PDF documents using AI-powered chat functionality">
+    <meta property="og:type" content="website">
+    <meta property="og:url" content="https://www.dwani.ai">
+    <meta property="og:image" content="https://www.dwani.ai/logo-color.png">
+    """
+
+    with gr.Blocks(
+        title="dwani.ai - Document Chat",
+        css=css,
+        fill_width=True,
+        head=head_tags,  # Add SEO meta tags
+        favicon_path=favicon_path  # Add favicon
+    ) as demo:
         gr.Markdown("# 📄 Document Chat - Query Your PDFs")
 
-        # Generate a unique session ID
         session_id = gr.State(value=f"session_{int(time())}")
 
         with gr.Row():
@@ -193,7 +209,6 @@ def create_gradio_app() -> gr.Blocks:
                     """
                 )
 
-        # Event bindings
         msg.submit(
             process_message,
             inputs=[chatbot, msg, pdf_input, session_id],
@@ -222,7 +237,12 @@ def main():
     try:
         validate_config()
         demo = create_gradio_app()
-        demo.launch(server_name=args.host, server_port=args.port, show_error=True)
+        demo.launch(
+            server_name=args.host,
+            server_port=args.port,
+            show_error=True,
+            favicon_path=os.path.join(os.path.dirname(__file__), "favicon.ico")  # Ensure favicon is passed to launch
+        )
     except Exception as e:
         logger.error(f"Failed to launch Gradio interface: {str(e)}")
         print(f"Failed to launch Gradio interface: {str(e)}")
