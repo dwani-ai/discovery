@@ -46,3 +46,19 @@ winget install llama.cpp
 
 
 llama-server -hf ggml-org/gemma-3-4b-it-GGUF --host 0.0.0.0 --port 9000 --n-gpu-layers 99 --ctx-size 8192 --alias gemma3 
+
+
+llama-server -hf ggml-org/gemma-3-4b-it-GGUF --host 0.0.0.0 --port 9000 --n-gpu-layers 99 --ctx-size 1008 --alias gemma3 
+
+
+Q4 : 2.37
+./build/bin/llama-server -hf google/gemma-3-4b-it-qat-q4_0-gguf --host 0.0.0.0 --port 9000 --n-gpu-layers 99 --ctx-size 1008 --alias gemma3
+
+
+Q4 : 2.37
+./build/bin/llama-server -hf ggml-org/gemma-3-4b-it-qat-GGUF --host 0.0.0.0 --port 9000 --n-gpu-layers 99 --ctx-size 1008 --alias gemma3
+
+
+Q2 :   1.73 GB
+
+./build/bin/llama-server -hf unsloth/gemma-3-4b-it-GGUF:Q2_k --host 0.0.0.0 --port 8000 --n-gpu-layers 99 --ctx-size 1008 --alias gemma3

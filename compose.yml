@@ -1,5 +1,3 @@
-version: '3.8'
-
 services:
   app:
     image: dwani/discovery_server:latest
@@ -8,15 +6,40 @@ services:
     environment:
       - PYTHONDONTWRITEBYTECODE=1
       - PYTHONUNBUFFERED=1
-      - DWANI_API_BASE_URL=host.docker.internal
+      - DWANI_API_BASE_URL=http://llama
     volumes:
       - app-data:/data
     networks:
       - app-network
-
+    depends_on:
+      llama:
+        condition: service_healthy
+  llama:
+    image: ghcr.io/ggml-org/llama.cpp:server-cuda
+    ports:
+      - "9000:9000"  # Map internal port 9000 to host port 9000
+    command: ["--port", "9000", "-a", "gemma3"]  # Set port to 9000 and model alias to gemma3
+    environment:
+      - CUDA_VISIBLE_DEVICES=0
+      - LLAMA_ARG_N_GPU_LAYERS=50  # Reduced to avoid VRAM issues
+      - LLAMA_ARG_MODEL=/models/ggml-org_gemma-3-4b-it-GGUF_gemma-3-4b-it-Q4_K_M.gguf
+    volumes:
+      - ./models:/models
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              capabilities: [gpu]
+    networks:
+      - app-network
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:9000"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
 volumes:
   app-data:
-
 networks:
   app-network:
     driver: bridge

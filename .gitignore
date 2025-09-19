@@ -3,6 +3,7 @@ python/reconaissance/ollama/
 python/ollama
 output.wav
 src/ollama
+models/
 pyautogenvenv/
 venv/
 venv_2
@@ -14,7 +15,7 @@ gemma-3n-E2B-it-ONNX/
 jfk.wav
 # C extensions
 *.so
-
+sessions.json
 *.jpg
 # Distribution / packaging
 .Python
