@@ -1,0 +1,9 @@
+services:
+  gemma-cpu:
+    image: ghcr.io/ggml-org/llama.cpp:server
+    environment:
+      - LLAMA_ARG_MODEL=/models/gemma-3-27b-it-qat-q4_0-gguf
+    ports:
+      - "8001:8080"
+    volumes:
+      - ./models:/models
