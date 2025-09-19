@@ -21,17 +21,16 @@ logger = logging.getLogger(__name__)
 DWANI_API_BASE_URL = os.getenv('DWANI_API_BASE_URL', '0.0.0.0')
 API_URL_PDF = f"http://{DWANI_API_BASE_URL}:18889/process_pdf"
 API_URL_MESSAGE = f"http://{DWANI_API_BASE_URL}:18889/process_message"
+API_URL_HEALTH = f"http://{DWANI_API_BASE_URL}:18889/health"
 MAX_FILE_SIZE_MB = 10  # Max PDF size in MB
 MAX_CONCURRENT_PDFS = 5  # Max PDFs to process concurrently
-CACHE_TTL = 3600  # Cache extracted text for 1 hour
-SESSION_CACHE = {}  # In-memory session cache: {session_id: {pdf_hash: extracted_text, timestamp}}
 
 def validate_config() -> None:
     """Validate environment configuration at startup."""
     if DWANI_API_BASE_URL == '0.0.0.0':
         logger.warning("DWANI_API_BASE_URL not set, using default '0.0.0.0'. This may cause issues in production.")
     try:
-        response = requests.get(f"http://{DWANI_API_BASE_URL}:18889/health", timeout=30)
+        response = requests.get(API_URL_HEALTH, timeout=30)
         response.raise_for_status()
     except requests.RequestException as e:
         logger.error(f"Failed to connect to API server at {DWANI_API_BASE_URL}: {str(e)}")
@@ -52,97 +51,97 @@ def validate_pdf(file_path: str) -> bool:
         logger.error(f"Error accessing file {file_path}: {str(e)}")
         return False
 
-def extract_single_pdf(pdf_path: str) -> str:
-    """Extract text from a single PDF."""
+def extract_single_pdf(pdf_path: str, session_id: str) -> Dict:
+    """Extract text from a single PDF using the server endpoint."""
     if not validate_pdf(pdf_path):
-        return ''
+        return {'extracted_text': '', 'skipped_pages': [], 'sessionId': session_id}
     try:
         with open(pdf_path, "rb") as f:
             files = {"file": (os.path.basename(pdf_path), f, "application/pdf")}
-            data = {"prompt": "Extract all text from this PDF."}
+            data = {"prompt": "Extract all text from this PDF.", "sessionId": session_id}
             response = requests.post(API_URL_PDF, files=files, data=data, timeout=90)
             response.raise_for_status()
-            return response.json().get('extracted_text', '')
+            result = response.json()
+            return {
+                'extracted_text': result.get('extracted_text', ''),
+                'skipped_pages': result.get('skipped_pages', []),
+                'sessionId': result.get('sessionId', session_id)
+            }
     except requests.RequestException as e:
         logger.error(f"Failed to extract text from {pdf_path}: {str(e)}")
-        return ''
+        return {'extracted_text': '', 'skipped_pages': [], 'sessionId': session_id}
     except Exception as e:
         logger.error(f"Unexpected error extracting text from {pdf_path}: {str(e)}")
-        return ''
+        return {'extracted_text': '', 'skipped_pages': [], 'sessionId': session_id}
 
-def extract_texts(pdf_paths: List[str], session_id: str) -> str:
-    """Extract text from multiple PDFs in parallel and cache results."""
+def extract_texts(pdf_paths: List[str], session_id: str) -> Tuple[str, str]:
+    """Extract text from multiple PDFs in parallel and return combined text and session ID."""
     valid_paths = [p for p in pdf_paths if validate_pdf(p)]
     if not valid_paths:
-        return "No valid PDFs provided."
-
-    # Generate cache key based on PDF paths
-    pdf_hash = hashlib.md5("".join(sorted(valid_paths)).encode()).hexdigest()
-    session_data = SESSION_CACHE.get(session_id, {})
-    cached = session_data.get('cache', {}).get(pdf_hash)
-
-    # Check cache and TTL
-    if cached and (time() - session_data.get('timestamp', 0)) < CACHE_TTL:
-        logger.info(f"Returning cached text for session {session_id}")
-        return cached['text']
+        return "No valid PDFs provided.", session_id
 
     # Extract texts in parallel
     with concurrent.futures.ThreadPoolExecutor(max_workers=min(len(valid_paths), MAX_CONCURRENT_PDFS)) as executor:
-        texts = list(executor.map(extract_single_pdf, valid_paths))
+        results = list(executor.map(lambda p: extract_single_pdf(p, session_id), valid_paths))
 
-    # Combine texts
-    combined = "\n\n---\n\n".join(
-        [f"Text from {os.path.basename(path)}:\n{text}" for path, text in zip(valid_paths, texts) if text]
-    )
+    # Combine texts and update session ID
+    combined_text = ""
+    final_session_id = session_id
+    for path, result in zip(valid_paths, results):
+        extracted_text = result['extracted_text']
+        if extracted_text:
+            combined_text += f"Text from {os.path.basename(path)}:\n{json.dumps(extracted_text)}\n\n---\n\n"
+        if result['skipped_pages']:
+            logger.warning(f"Skipped pages in {path}: {result['skipped_pages']}")
+        final_session_id = result['sessionId']  # Update with the latest session ID from server
 
-    # Update cache
-    SESSION_CACHE[session_id] = {
-        'cache': {pdf_hash: {'text': combined, 'timestamp': time()}},
-        'timestamp': time(),
-        'pdf_paths': valid_paths
-    }
-    return combined
+    return combined_text.strip(), final_session_id
 
-def process_message(history: List[Dict], message: str, pdf_files: Optional[List[str]], session_id: str) -> Tuple[List[Dict], str]:
-    """Handle chat messages, reusing cached extracted text."""
+def process_message(history: List[Dict], message: str, pdf_files: Optional[List[str]], session_id: str) -> Tuple[List[Dict], str, str]:
+    """Handle chat messages, using server session management."""
     pdf_files = pdf_files or []
     current_paths = sorted(pdf_files)
 
     # Validate input
     if not message.strip():
-        return history + [{"role": "user", "content": message}, {"role": "assistant", "content": "⚠️ Please enter a valid question!"}], ""
-
+        return history + [{"role": "user", "content": message}, {"role": "assistant", "content": "⚠️ Please enter a valid question!"}], "", session_id
     if not current_paths:
-        return history + [{"role": "user", "content": message}, {"role": "assistant", "content": "⚠️ Please upload at least one PDF first!"}], ""
+        return history + [{"role": "user", "content": message}, {"role": "assistant", "content": "⚠️ Please upload at least one PDF first!"}], "", session_id
 
     try:
-        # Extract or retrieve cached text
-        extracted_text = extract_texts(current_paths, session_id)
+        # Extract text from PDFs
+        extracted_text, new_session_id = extract_texts(current_paths, session_id)
         if not extracted_text:
-            return history + [{"role": "user", "content": message}, {"role": "assistant", "content": "⚠️ No text could be extracted from the provided PDFs!"}], ""
+            return history + [{"role": "user", "content": message}, {"role": "assistant", "content": "⚠️ No text could be extracted from the provided PDFs!"}], "", new_session_id
 
         # Send query to API
-        data = {"prompt": message, "extracted_text": json.dumps(extracted_text)}
+        data = {
+            "prompt": message,
+            "extracted_text": extracted_text,
+            "sessionId": new_session_id
+        }
         response = requests.post(API_URL_MESSAGE, data=data, timeout=90)
         response.raise_for_status()
         result = response.json()
 
-        return history + [{"role": "user", "content": message}, {"role": "assistant", "content": result['response']}], ""
+        # Update history with server response
+        history.append({"role": "user", "content": message})
+        history.append({"role": "assistant", "content": result['response']})
+        return history, "", result['sessionId']
     except requests.RequestException as e:
         logger.error(f"API request failed for session {session_id}: {str(e)}")
-        return history + [{"role": "user", "content": message}, {"role": "assistant", "content": f"❌ Error: Failed to process your request. Please try again later."}], ""
+        return history + [{"role": "user", "content": message}, {"role": "assistant", "content": f"❌ Error: Failed to process your request. Please try again later."}], "", session_id
     except Exception as e:
         logger.error(f"Unexpected error for session {session_id}: {str(e)}")
-        return history + [{"role": "user", "content": message}, {"role": "assistant", "content": f"❌ Error: {str(e)}"}], ""
+        return history + [{"role": "user", "content": message}, {"role": "assistant", "content": f"❌ Error: {str(e)}"}], "", session_id
 
 def clear_chat(session_id: str) -> List:
     """Clear the chat history for a session."""
     return []
 
-def new_chat(session_id: str) -> Tuple[List, None]:
+def new_chat(session_id: str) -> Tuple[List, None, str]:
     """Clear chat history and reset PDF state for a session."""
-    SESSION_CACHE.pop(session_id, None)
-    return [], None
+    return [], None, f"session_{int(time())}"
 
 # Custom styling
 css = """
@@ -197,7 +196,7 @@ def create_gradio_app() -> gr.Blocks:
         msg.submit(
             process_message,
             inputs=[chatbot, msg, pdf_input, session_id],
-            outputs=[chatbot, msg]
+            outputs=[chatbot, msg, session_id]
         )
         clear.click(
             clear_chat,
@@ -207,7 +206,7 @@ def create_gradio_app() -> gr.Blocks:
         new_chat_button.click(
             new_chat,
             inputs=[session_id],
-            outputs=[chatbot, pdf_input]
+            outputs=[chatbot, pdf_input, session_id]
         )
 
     return demo
