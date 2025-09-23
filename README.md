@@ -36,3 +36,7 @@ uvicorn server.main:app --host 0.0.0.0 --port 18889
 
 - Docker build steps - [docs/build_docker.md](docs/build_docker.md)
 
+
+
+docker build -t dwani/discovery-server:latest -f server.Dockerfile .
+

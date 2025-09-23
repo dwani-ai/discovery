@@ -1,0 +1,10 @@
+services:
+  app:
+    build: .
+    image: dwani/discovery-server
+    ports:
+      - "18889:18889"  # Maps host port 80 to container port 8080 (Nginx internal port)
+    restart: unless-stopped
+    # Optional: Add volumes for persistent logs if needed
+    # volumes:
+    #   - ./data:/data
