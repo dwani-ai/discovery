@@ -62,3 +62,10 @@ Q4 : 2.37
 Q2 :   1.73 GB
 
 ./build/bin/llama-server -hf unsloth/gemma-3-4b-it-GGUF:Q2_k --host 0.0.0.0 --port 8000 --n-gpu-layers 99 --ctx-size 1008 --alias gemma3
+
+
+--
+
+
+./build/bin/llama-server -hf ggml-org/gemma-3-4b-it-GGUF:Q8_0 --host 0.0.0.0 --port 9000 --n-gpu-layers 9 --ctx-size 1008 --alias gemma3
+
