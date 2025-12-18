@@ -9,6 +9,5 @@ for client
     - [README.md](frontend/README.md)
 
 for VLM
-    - [README.md](vlm/README.md
-    )
+    - [README.md](vlm/README.md)
 
