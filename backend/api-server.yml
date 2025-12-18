@@ -1,0 +1,31 @@
+services:
+  fastapi:
+    image: dwani/api-server:latest  # Replace with your FastAPI Docker image
+    container_name: fastapi_server
+    ports:
+      - "80:18888"  # Expose FastAPI server port (adjust if needed)
+    environment:
+      - HF_TOKEN=hf_this_is_a_valid_token_for_not_google
+      - API_KEY_SECRET=dwani-very-secret-key-please-dont-tell-anyone
+      - CHAT_RATE_LIMIT=100/minute
+      - DWANI_API_BASE_URL_PDF=http://host.docker.internal:7861
+      - DWANI_API_BASE_URL_VISION=http://host.docker.internal:7861
+      - DWANI_API_BASE_URL_LLM=http://host.docker.internal:7861
+      - DWANI_API_BASE_URL_LLM_QWEN=http://host.docker.internal:7880
+      - DWANI_API_BASE_URL_TTS=http://host.docker.internal:7864
+      - DWANI_API_BASE_URL_ASR=http://host.docker.internal:7863
+      - DWANI_API_BASE_URL_TRANSLATE=http://host.docker.internal:7862
+      - DWANI_API_BASE_URL_S2S=http://host.docker.internal:7861
+      - SPEECH_RATE_LIMIT=5/minute
+      - ENCRYPTION_KEY=tete
+      - DEFAULT_ADMIN_USER=this_is_default_amdin
+      - DEFAULT_ADMIN_PASSWORD=not_default_admin
+    networks:
+      - app-network
+    extra_hosts:
+      - "host.docker.internal:host-gateway"  # Allows access to host's localhost
+    restart: unless-stopped
+
+networks:
+  app-network:
+    driver: bridge
