@@ -13,7 +13,8 @@ export default defineConfig({
     allowedHosts: [
       'localhost',
       '127.0.0.1',
-      'app.dwani.ai',        // ← Add your custom domain here
+      'app.dwani.ai',
+      'discovery-server.dwani.ai',        // ← Add your custom domain here
     ],
   },
 });
