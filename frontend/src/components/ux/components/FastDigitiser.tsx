@@ -16,6 +16,12 @@ import List from '@mui/material/List';
 import ListItem from '@mui/material/ListItem';
 import Paper from '@mui/material/Paper';
 import SendIcon from '@mui/icons-material/Send';
+import SearchIcon from '@mui/icons-material/Search';
+import InputAdornment from '@mui/material/InputAdornment';
+import IconButton from '@mui/material/IconButton';
+import ClearIcon from '@mui/icons-material/Clear';
+
+import Highlight from 'react-highlight-words';
 
 import { useDocumentExtraction } from './useDocumentExtraction';
 
@@ -45,6 +51,10 @@ export default function Digitiser() {
   >([]);
   const [chatLoading, setChatLoading] = useState(false);
   const [chatError, setChatError] = useState<string | null>(null);
+
+  // Search state
+  const [searchQuery, setSearchQuery] = useState('');
+  const [showSearchResults, setShowSearchResults] = useState(false);
 
   //const API_BASE = import.meta.env.VITE_API_BASE_URL || 'https://discovery-server.dwani.ai';
   const API_BASE = 'http://localhost:8000'
@@ -90,9 +100,11 @@ export default function Digitiser() {
 
   const handleOpenChat = () => {
     setChatOpen(true);
+    setSearchQuery('');
+    setShowSearchResults(false);
 
     if (chatHistory.length === 0 && extractedText) {
-      const truncatedText = extractedText.slice(0, 20000); // Safe token limit
+      const truncatedText = extractedText.slice(0, 20000);
       setChatHistory([
         {
           role: 'system',
@@ -100,7 +112,7 @@ export default function Digitiser() {
         },
         {
           role: 'assistant',
-          content: 'Hello! I’ve loaded the document. Feel free to ask any questions about its content.',
+          content: 'Hello! I’ve loaded the document. You can chat with me or use the search box to find specific text.',
         },
       ]);
     }
@@ -108,6 +120,13 @@ export default function Digitiser() {
 
   const handleCloseChat = () => {
     setChatOpen(false);
+  };
+
+  const toggleSearch = () => {
+    setShowSearchResults(!showSearchResults);
+    if (showSearchResults) {
+      setSearchQuery('');
+    }
   };
 
   const handleSendMessage = async () => {
@@ -315,10 +334,80 @@ export default function Digitiser() {
         </DialogActions>
       </Dialog>
 
-      {/* Chat with Document Dialog */}
+      {/* Chat with Document Dialog + Search */}
       <Dialog open={chatOpen} onClose={handleCloseChat} maxWidth="md" fullWidth>
-        <DialogTitle>Chat with Your Document</DialogTitle>
+        <DialogTitle>
+          <Stack direction="row" justifyContent="space-between" alignItems="center">
+            <Typography variant="h6">Chat with Your Document</Typography>
+            <Button
+              startIcon={<SearchIcon />}
+              onClick={toggleSearch}
+              variant={showSearchResults ? "contained" : "outlined"}
+              color="primary"
+              size="small"
+            >
+              {showSearchResults ? 'Close Search' : 'Search in Document'}
+            </Button>
+          </Stack>
+        </DialogTitle>
+
         <DialogContent dividers sx={{ display: 'flex', flexDirection: 'column', height: '70vh' }}>
+          {/* Search Results Panel */}
+          {showSearchResults && (
+            <Paper variant="outlined" sx={{ p: 2, mb: 2, maxHeight: '40vh', overflow: 'auto', bgcolor: 'grey.50' }}>
+              <Typography variant="subtitle1" gutterBottom>
+                Search Results for: <strong>"{searchQuery || '—'}"</strong>
+              </Typography>
+
+              <TextField
+                fullWidth
+                variant="outlined"
+                placeholder="Search in document..."
+                value={searchQuery}
+                onChange={(e) => setSearchQuery(e.target.value)}
+                sx={{ mb: 2 }}
+                InputProps={{
+                  startAdornment: (
+                    <InputAdornment position="start">
+                      <SearchIcon />
+                    </InputAdornment>
+                  ),
+                  endAdornment: searchQuery && (
+                    <InputAdornment position="end">
+                      <IconButton onClick={() => setSearchQuery('')} size="small">
+                        <ClearIcon />
+                      </IconButton>
+                    </InputAdornment>
+                  ),
+                }}
+                autoFocus
+              />
+
+              {searchQuery.trim() ? (
+                <Typography
+                  component="div"
+                  sx={{
+                    whiteSpace: 'pre-wrap',
+                    fontSize: '0.95rem',
+                    lineHeight: 1.6,
+                  }}
+                >
+                  <Highlight
+                    highlightClassName="search-highlight"
+                    searchWords={[searchQuery.trim()]}
+                    autoEscape={true}
+                    textToHighlight={extractedText || ''}
+                  />
+                </Typography>
+              ) : (
+                <Typography color="text.secondary">
+                  Type a keyword or phrase to search within the document.
+                </Typography>
+              )}
+            </Paper>
+          )}
+
+          {/* Chat History */}
           <Paper variant="outlined" sx={{ flexGrow: 1, overflow: 'auto', p: 2, mb: 2, bgcolor: 'background.default' }}>
             <List>
               {chatHistory
@@ -363,6 +452,7 @@ export default function Digitiser() {
             </Alert>
           )}
 
+          {/* Chat Input */}
           <Stack direction="row" spacing={1} alignItems="flex-end">
             <TextField
               fullWidth
@@ -390,6 +480,7 @@ export default function Digitiser() {
             </Button>
           </Stack>
         </DialogContent>
+
         <DialogActions>
           <Button onClick={handleCloseChat}>Close</Button>
         </DialogActions>
