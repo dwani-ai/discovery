@@ -409,6 +409,48 @@ def list_files(db: Session = Depends(get_db), limit: int = 20):
         for f in files
     ]
 
+class ChatMessage(BaseModel):
+    role: str  # "system", "user", or "assistant"
+    content: str
+
+class ChatRequest(BaseModel):
+    file_id: str
+    messages: List[ChatMessage]
+
+@app.post("/chat-with-document", tags=["Files"])
+async def chat_with_document(request: ChatRequest, db: Session = Depends(get_db)):
+    record = db.query(FileRecord).filter(FileRecord.id == request.file_id).first()
+    if not record:
+        raise HTTPException(status_code=404, detail="File not found")
+    if record.status != FileStatus.COMPLETED or not record.extracted_text:
+        raise HTTPException(status_code=400, detail="Document extraction not complete")
+
+    # Use provided messages; fallback to injecting context if system prompt is missing
+    system_msg = next((m for m in request.messages if m.role == "system"), None)
+    if not system_msg:
+        context = record.extracted_text[:20000]
+        full_messages = [
+            {"role": "system", "content": f"Answer questions based only on this document text:\n\n{context}"},
+            *[m.dict() for m in request.messages]
+        ]
+    else:
+        full_messages = [m.dict() for m in request.messages]
+
+    model = "gemma3"  # Change if using a different model
+    client = get_async_openai_client(model)
+
+    try:
+        response = await client.chat.completions.create(
+            model=model,
+            messages=full_messages,
+            temperature=0.7,
+            max_tokens=1024,
+        )
+        answer = response.choices[0].message.content.strip()
+        return {"answer": answer}
+    except Exception as e:
+        logger.error(f"Chat failed for file {request.file_id}: {e}")
+        raise HTTPException(status_code=500, detail="Failed to generate response")
 
 # -------------------------- Run Server --------------------------
 if __name__ == "__main__":

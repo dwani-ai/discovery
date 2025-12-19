@@ -1,4 +1,4 @@
-import { useState} from 'react';
+import { useState } from 'react';
 import Box from '@mui/material/Box';
 import Button from '@mui/material/Button';
 import Stack from '@mui/material/Stack';
@@ -11,6 +11,11 @@ import Dialog from '@mui/material/Dialog';
 import DialogActions from '@mui/material/DialogActions';
 import DialogContent from '@mui/material/DialogContent';
 import DialogTitle from '@mui/material/DialogTitle';
+import TextField from '@mui/material/TextField';
+import List from '@mui/material/List';
+import ListItem from '@mui/material/ListItem';
+import Paper from '@mui/material/Paper';
+import SendIcon from '@mui/icons-material/Send';
 
 import { useDocumentExtraction } from './useDocumentExtraction';
 
@@ -33,6 +38,17 @@ export default function Digitiser() {
   } = useDocumentExtraction();
 
   const [previewOpen, setPreviewOpen] = useState(false);
+  const [chatOpen, setChatOpen] = useState(false);
+  const [userMessage, setUserMessage] = useState('');
+  const [chatHistory, setChatHistory] = useState<
+    { role: 'user' | 'assistant' | 'system'; content: string }[]
+  >([]);
+  const [chatLoading, setChatLoading] = useState(false);
+  const [chatError, setChatError] = useState<string | null>(null);
+
+  //const API_BASE = import.meta.env.VITE_API_BASE_URL || 'https://discovery-server.dwani.ai';
+  const API_BASE = 'http://localhost:8000'
+  const API_KEY = import.meta.env.VITE_DWANI_API_KEY;
 
   const getStatusColor = (status: string | null) => {
     switch (status) {
@@ -72,6 +88,67 @@ export default function Digitiser() {
     setPreviewOpen(false);
   };
 
+  const handleOpenChat = () => {
+    setChatOpen(true);
+
+    if (chatHistory.length === 0 && extractedText) {
+      const truncatedText = extractedText.slice(0, 20000); // Safe token limit
+      setChatHistory([
+        {
+          role: 'system',
+          content: `You are a helpful assistant answering questions based solely on the following document text:\n\n${truncatedText}`,
+        },
+        {
+          role: 'assistant',
+          content: 'Hello! I’ve loaded the document. Feel free to ask any questions about its content.',
+        },
+      ]);
+    }
+  };
+
+  const handleCloseChat = () => {
+    setChatOpen(false);
+  };
+
+  const handleSendMessage = async () => {
+    if (!userMessage.trim() || chatLoading || !fileId) return;
+
+    const userMsg = userMessage.trim();
+    const updatedHistory = [...chatHistory, { role: 'user', content: userMsg }];
+    setChatHistory(updatedHistory);
+    setUserMessage('');
+    setChatLoading(true);
+    setChatError(null);
+
+    try {
+      const response = await fetch(`${API_BASE}/chat-with-document`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'X-API-KEY': API_KEY || '',
+        },
+        body: JSON.stringify({
+          file_id: fileId,
+          messages: updatedHistory,
+        }),
+      });
+
+      if (!response.ok) {
+        const err = await response.json().catch(() => ({}));
+        throw new Error(err.detail || 'Chat request failed');
+      }
+
+      const data = await response.json();
+      const assistantReply = data.answer?.trim() || 'No response received.';
+
+      setChatHistory([...updatedHistory, { role: 'assistant', content: assistantReply }]);
+    } catch (err) {
+      setChatError(err instanceof Error ? err.message : 'Failed to get response');
+    } finally {
+      setChatLoading(false);
+    }
+  };
+
   return (
     <Box
       sx={{
@@ -107,7 +184,7 @@ export default function Digitiser() {
             onChange={handleFileChange}
             style={{ display: 'none' }}
             id="pdf-upload"
-            disabled={!!fileId} // Prevent changing file after upload
+            disabled={!!fileId}
           />
           <label htmlFor="pdf-upload">
             <Button
@@ -211,6 +288,9 @@ export default function Digitiser() {
               <Button variant="contained" onClick={handleDownloadPdf}>
                 Download PDF
               </Button>
+              <Button variant="outlined" color="secondary" onClick={handleOpenChat}>
+                Chat with Document
+              </Button>
             </Stack>
           </Box>
         )}
@@ -232,6 +312,86 @@ export default function Digitiser() {
         </DialogContent>
         <DialogActions>
           <Button onClick={handleClosePreview}>Close</Button>
+        </DialogActions>
+      </Dialog>
+
+      {/* Chat with Document Dialog */}
+      <Dialog open={chatOpen} onClose={handleCloseChat} maxWidth="md" fullWidth>
+        <DialogTitle>Chat with Your Document</DialogTitle>
+        <DialogContent dividers sx={{ display: 'flex', flexDirection: 'column', height: '70vh' }}>
+          <Paper variant="outlined" sx={{ flexGrow: 1, overflow: 'auto', p: 2, mb: 2, bgcolor: 'background.default' }}>
+            <List>
+              {chatHistory
+                .filter(msg => msg.role !== 'system')
+                .map((msg, idx) => (
+                  <ListItem
+                    key={idx}
+                    alignItems="flex-start"
+                    sx={{
+                      flexDirection: msg.role === 'user' ? 'row-reverse' : 'row',
+                      textAlign: msg.role === 'user' ? 'right' : 'left',
+                    }}
+                  >
+                    <Paper
+                      elevation={1}
+                      sx={{
+                        p: 2,
+                        maxWidth: '80%',
+                        bgcolor: msg.role === 'user' ? 'primary.light' : 'grey.100',
+                        color: msg.role === 'user' ? 'white' : 'text.primary',
+                      }}
+                    >
+                      <Typography variant="subtitle2" fontWeight="bold" gutterBottom>
+                        {msg.role === 'user' ? 'You' : 'Assistant'}
+                      </Typography>
+                      <Typography whiteSpace="pre-wrap">{msg.content}</Typography>
+                    </Paper>
+                  </ListItem>
+                ))}
+              {chatLoading && (
+                <ListItem>
+                  <CircularProgress size={24} />
+                  <Typography sx={{ ml: 2 }}>Thinking...</Typography>
+                </ListItem>
+              )}
+            </List>
+          </Paper>
+
+          {chatError && (
+            <Alert severity="error" onClose={() => setChatError(null)} sx={{ mb: 2 }}>
+              {chatError}
+            </Alert>
+          )}
+
+          <Stack direction="row" spacing={1} alignItems="flex-end">
+            <TextField
+              fullWidth
+              multiline
+              maxRows={4}
+              variant="outlined"
+              placeholder="Ask a question about the document..."
+              value={userMessage}
+              onChange={(e) => setUserMessage(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter' && !e.shiftKey) {
+                  e.preventDefault();
+                  handleSendMessage();
+                }
+              }}
+              disabled={chatLoading}
+            />
+            <Button
+              variant="contained"
+              onClick={handleSendMessage}
+              disabled={!userMessage.trim() || chatLoading}
+              sx={{ height: 56 }}
+            >
+              <SendIcon />
+            </Button>
+          </Stack>
+        </DialogContent>
+        <DialogActions>
+          <Button onClick={handleCloseChat}>Close</Button>
         </DialogActions>
       </Dialog>
     </Box>
