@@ -36,6 +36,8 @@ interface UploadedFile {
   created_at: string;
 }
 
+type Message = { role: 'user' | 'assistant' | 'system'; content: string };
+
 export default function Digitiser() {
   const {
     file,
@@ -58,9 +60,7 @@ export default function Digitiser() {
   const [previewOpen, setPreviewOpen] = useState(false);
   const [chatOpen, setChatOpen] = useState(false);
   const [userMessage, setUserMessage] = useState('');
-  const [chatHistory, setChatHistory] = useState<
-    { role: 'user' | 'assistant' | 'system'; content: string }[]
-  >([]);
+  const [chatHistory, setChatHistory] = useState<Message[]>([]);
   const [chatLoading, setChatLoading] = useState(false);
   const [chatError, setChatError] = useState<string | null>(null);
   const [currentFilename, setCurrentFilename] = useState<string>('');
@@ -71,8 +71,8 @@ export default function Digitiser() {
   const [uploadedFiles, setUploadedFiles] = useState<UploadedFile[]>([]);
   const [filesLoading, setFilesLoading] = useState(true);
 
-  //const API_BASE = import.meta.env.VITE_API_BASE_URL || 'https://discovery-server.dwani.ai';
-  const API_BASE = 'http://localhost:8000'
+  const API_BASE = import.meta.env.VITE_DWANI_API_BASE_URL || 'https://discovery-server.dwani.ai';
+  //const API_BASE = 'http://localhost:8000'
   const API_KEY = import.meta.env.VITE_DWANI_API_KEY;
 
   const fetchUploadedFiles = async () => {
@@ -154,8 +154,8 @@ export default function Digitiser() {
         setCurrentFilename(filename);
         const truncated = extractedText.slice(0, 20000);
         setChatHistory([
-          { role: 'system', content: `You are a helpful assistant answering questions based solely on the document "${filename}":\n\n${truncated}` },
-          { role: 'assistant', content: `I've loaded "${filename}". Ask me anything!` },
+          { role: 'system' as const, content: `You are a helpful assistant answering questions based solely on the document "${filename}":\n\n${truncated}` },
+          { role: 'assistant' as const, content: `I've loaded "${filename}". Ask me anything!` },
         ]);
         setChatOpen(true);
       } else {
@@ -172,8 +172,8 @@ export default function Digitiser() {
     const truncated = extractedText.slice(0, 20000);
     if (chatHistory.length === 0) {
       setChatHistory([
-        { role: 'system', content: `You are a helpful assistant answering questions based solely on the document text:\n\n${truncated}` },
-        { role: 'assistant', content: 'Hello! I’ve loaded the document. You can chat or search below.' },
+        { role: 'system' as const, content: `You are a helpful assistant answering questions based solely on the document text:\n\n${truncated}` },
+        { role: 'assistant' as const, content: 'Hello! I’ve loaded the document. You can chat or search below.' },
       ]);
     }
     setChatOpen(true);
@@ -183,11 +183,11 @@ export default function Digitiser() {
     if (!userMessage.trim() || chatLoading || !fileId) return;
 
     const userMsg = userMessage.trim();
-    const newHistory = [...chatHistory, { role: 'user', content: userMsg }];
-    setChatHistory(newHistory);
     setUserMessage('');
     setChatLoading(true);
     setChatError(null);
+
+    setChatHistory(prev => [...prev, { role: 'user' as const, content: userMsg }]);
 
     try {
       const res = await fetch(`${API_BASE}/chat-with-document`, {
@@ -196,13 +196,13 @@ export default function Digitiser() {
           'Content-Type': 'application/json',
           'X-API-KEY': API_KEY || '',
         },
-        body: JSON.stringify({ file_id: fileId, messages: newHistory }),
+        body: JSON.stringify({ file_id: fileId, messages: [...chatHistory, { role: 'user' as const, content: userMsg }] }),
       });
 
       if (!res.ok) throw new Error((await res.json()).detail || 'Chat failed');
 
       const { answer } = await res.json();
-      setChatHistory([...newHistory, { role: 'assistant', content: answer?.trim() || 'No reply.' }]);
+      setChatHistory(prev => [...prev, { role: 'assistant' as const, content: answer?.trim() || 'No reply.' }]);
     } catch (err) {
       setChatError(err instanceof Error ? err.message : 'Failed to get response');
     } finally {
@@ -222,77 +222,77 @@ export default function Digitiser() {
     }}>
       <Stack spacing={5} sx={{ width: { xs: '100%', sm: '90%', md: '1000px' } }}>
 
-{/* Uploaded Files Table - Now Scrollable */}
-<Box>
-  <Typography variant="h5" gutterBottom sx={{ mb: 2 }}>
-    Your Uploaded Documents
-  </Typography>
-  <TableContainer 
-    component={Paper} 
-    elevation={2}
-    sx={{ 
-      maxHeight: 400, 
-      overflow: 'auto',
-      borderRadius: 2,
-    }}
-  >
-    <Table stickyHeader>
-      <TableHead>
-        <TableRow>
-          <TableCell sx={{ bgcolor: 'background.paper', fontWeight: 'bold' }}>Filename</TableCell>
-          <TableCell sx={{ bgcolor: 'background.paper', fontWeight: 'bold' }}>Uploaded</TableCell>
-          <TableCell sx={{ bgcolor: 'background.paper', fontWeight: 'bold' }}>Status</TableCell>
-          <TableCell align="center" sx={{ bgcolor: 'background.paper', fontWeight: 'bold' }}>Action</TableCell>
-        </TableRow>
-      </TableHead>
-      <TableBody>
-        {filesLoading ? (
-          <TableRow>
-            <TableCell colSpan={4} align="center" sx={{ py: 4 }}>
-              <CircularProgress />
-            </TableCell>
-          </TableRow>
-        ) : uploadedFiles.length === 0 ? (
-          <TableRow>
-            <TableCell colSpan={4} align="center" sx={{ py: 8, color: 'text.secondary' }}>
-              No documents uploaded yet.
-            </TableCell>
-          </TableRow>
-        ) : (
-          uploadedFiles.map(doc => (
-            <TableRow key={doc.file_id} hover>
-              <TableCell>
-                <Tooltip title={doc.filename}>
-                  <Typography noWrap sx={{ maxWidth: 300 }}>
-                    {doc.filename}
-                  </Typography>
-                </Tooltip>
-              </TableCell>
-              <TableCell>{formatDate(doc.created_at)}</TableCell>
-              <TableCell>
-                <Chip 
-                  label={getStatusText(doc.status)} 
-                  color={getStatusColor(doc.status)} 
-                  size="small" 
-                />
-              </TableCell>
-              <TableCell align="center">
-                <Button
-                  variant="outlined"
-                  size="small"
-                  onClick={() => openChatForFile(doc.file_id, doc.filename)}
-                  disabled={doc.status !== 'completed'}
-                >
-                  Chat
-                </Button>
-              </TableCell>
-            </TableRow>
-          ))
-        )}
-      </TableBody>
-    </Table>
-  </TableContainer>
-</Box>
+        {/* Uploaded Files Table - Now Scrollable */}
+        <Box>
+          <Typography variant="h5" gutterBottom sx={{ mb: 2 }}>
+            Your Uploaded Documents
+          </Typography>
+          <TableContainer 
+            component={Paper} 
+            elevation={2}
+            sx={{ 
+              maxHeight: 400, 
+              overflow: 'auto',
+              borderRadius: 2,
+            }}
+          >
+            <Table stickyHeader>
+              <TableHead>
+                <TableRow>
+                  <TableCell sx={{ bgcolor: 'background.paper', fontWeight: 'bold' }}>Filename</TableCell>
+                  <TableCell sx={{ bgcolor: 'background.paper', fontWeight: 'bold' }}>Uploaded</TableCell>
+                  <TableCell sx={{ bgcolor: 'background.paper', fontWeight: 'bold' }}>Status</TableCell>
+                  <TableCell align="center" sx={{ bgcolor: 'background.paper', fontWeight: 'bold' }}>Action</TableCell>
+                </TableRow>
+              </TableHead>
+              <TableBody>
+                {filesLoading ? (
+                  <TableRow>
+                    <TableCell colSpan={4} align="center" sx={{ py: 4 }}>
+                      <CircularProgress />
+                    </TableCell>
+                  </TableRow>
+                ) : uploadedFiles.length === 0 ? (
+                  <TableRow>
+                    <TableCell colSpan={4} align="center" sx={{ py: 8, color: 'text.secondary' }}>
+                      No documents uploaded yet.
+                    </TableCell>
+                  </TableRow>
+                ) : (
+                  uploadedFiles.map(doc => (
+                    <TableRow key={doc.file_id} hover>
+                      <TableCell>
+                        <Tooltip title={doc.filename}>
+                          <Typography noWrap sx={{ maxWidth: 300 }}>
+                            {doc.filename}
+                          </Typography>
+                        </Tooltip>
+                      </TableCell>
+                      <TableCell>{formatDate(doc.created_at)}</TableCell>
+                      <TableCell>
+                        <Chip 
+                          label={getStatusText(doc.status)} 
+                          color={getStatusColor(doc.status)} 
+                          size="small" 
+                        />
+                      </TableCell>
+                      <TableCell align="center">
+                        <Button
+                          variant="outlined"
+                          size="small"
+                          onClick={() => openChatForFile(doc.file_id, doc.filename)}
+                          disabled={doc.status !== 'completed'}
+                        >
+                          Chat
+                        </Button>
+                      </TableCell>
+                    </TableRow>
+                  ))
+                )}
+              </TableBody>
+            </Table>
+          </TableContainer>
+        </Box>
         <Divider />
 
         {/* New Upload Section */}
@@ -382,7 +382,12 @@ export default function Digitiser() {
               />
               {searchQuery.trim() && (
                 <Typography component="div" sx={{ whiteSpace: 'pre-wrap', fontSize: '0.95rem', lineHeight: 1.6 }}>
-                  <Highlight highlightClassName="search-highlight" searchWords={[searchQuery.trim()]} autoEscape textToHighlight={extractedText} />
+                  <Highlight 
+                    highlightClassName="search-highlight" 
+                    searchWords={[searchQuery.trim()]} 
+                    autoEscape 
+                    textToHighlight={extractedText ?? ''} 
+                  />
                 </Typography>
               )}
             </Paper>
