@@ -79,14 +79,13 @@ app.add_middleware(
     CORSMiddleware,
     allow_origins=[
         "https://app.dwani.ai",
+        "http://localhost:5173",
         "http://127.0.0.1:5173",
-        "http://localhost:5173",  # React dev
-        "http://localhost",       # If accessing frontend via host port 80 or similar
-        "http://127.0.0.1",
     ],
-    allow_credentials=False,
-    allow_methods=["*"],
-    allow_headers=["*"],
+    allow_credentials=False,  # Keep False if not using cookies/auth
+    allow_methods=["GET", "POST", "OPTIONS", "DELETE"],  # Explicit > *
+    allow_headers=["X-API-KEY", "Content-Type", "Accept"],
+    max_age=600,
 )
 
 # -------------------------- Database Models --------------------------
