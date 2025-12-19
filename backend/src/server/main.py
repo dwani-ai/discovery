@@ -82,8 +82,8 @@ app.add_middleware(
         "https://dwani.ai",
         "https://*.dwani.ai",
         "https://dwani-*.hf.space",
-        "http://localhost:11080",
-        "http://localhost:3000",  # React dev
+        "http://127.0.0.1:5173",
+        "http://localhost:5173",  # React dev
     ],
     allow_credentials=False,
     allow_methods=["*"],
