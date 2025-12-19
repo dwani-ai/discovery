@@ -11,3 +11,7 @@ for client
 for VLM
     - [README.md](vlm/README.md)
 
+
+
+To run locally
+    - docker compose -f docker-compose.yml up -d
