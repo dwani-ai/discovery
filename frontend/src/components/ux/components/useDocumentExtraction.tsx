@@ -228,5 +228,6 @@ export const useDocumentExtraction = () => {
     handleDownloadPdf,
     handlePreviewPdf,
     reset,
+    clearError: () => setError(null),
   };
 };
