@@ -31,11 +31,8 @@ export const useDocumentExtraction = () => {
 
   const pollIntervalRef = useRef<NodeJS.Timeout | null>(null);
 
-  //const API_BASE = 'https://api.dwani.ai';
   //const API_BASE = import.meta.env.VITE_API_BASE_URL || 'https://discovery-server.dwani.ai';
-  
   const API_BASE = 'http://localhost:8000'
-
   const API_KEY = import.meta.env.VITE_DWANI_API_KEY;
 
   const handleFileChange = (event: React.ChangeEvent<HTMLInputElement>) => {
@@ -90,7 +87,7 @@ export const useDocumentExtraction = () => {
     }
   };
 
-  const fetchExtractionStatus = async (id: string) => {
+  const fetchFileDetails = async (id: string) => {
     try {
       const response = await fetch(`${API_BASE}/files/${id}`, {
         headers: {
@@ -100,25 +97,25 @@ export const useDocumentExtraction = () => {
       });
 
       if (!response.ok) {
-        throw new Error('Failed to fetch status');
+        throw new Error('Failed to fetch file details');
       }
 
       const data: FileRetrieveResponse = await response.json();
       setStatus(data.status);
-
-      if (data.status === 'completed' && data.extracted_text) {
-        setExtractedText(data.extracted_text);
-      } else if (data.status === 'failed') {
-        setError(data.error_message || 'Extraction failed on server');
+      setExtractedText(data.extracted_text || '');
+      if (data.status === 'failed') {
+        setError(data.error_message || 'Extraction failed');
       }
+      return data;
     } catch (err) {
-      setError('Failed to check extraction status');
+      setError('Failed to fetch file details');
+      throw err;
     }
   };
 
-  // Poll when we have a file_id and status is not terminal
+  // Poll for status updates
   useEffect(() => {
-    if (!fileId || !status || status === 'completed' || status === 'failed') {
+    if (!fileId || !status || ['completed', 'failed'].includes(status)) {
       if (pollIntervalRef.current) {
         clearInterval(pollIntervalRef.current);
         pollIntervalRef.current = null;
@@ -128,13 +125,10 @@ export const useDocumentExtraction = () => {
     }
 
     setLoading(true);
+    fetchFileDetails(fileId);
 
-    // Initial fetch
-    fetchExtractionStatus(fileId);
-
-    // Poll every 3 seconds
     pollIntervalRef.current = setInterval(() => {
-      fetchExtractionStatus(fileId);
+      fetchFileDetails(fileId);
     }, 3000);
 
     return () => {
@@ -143,6 +137,22 @@ export const useDocumentExtraction = () => {
       }
     };
   }, [fileId, status]);
+
+  const loadExistingFile = async (id: string) => {
+    setLoading(true);
+    setError(null);
+    setFile(null); // No file for existing
+    setFileId(id);
+    try {
+      const data = await fetchFileDetails(id);
+      setStatus(data.status);
+      if (data.status === 'completed') {
+        setExtractedText(data.extracted_text || '');
+      }
+    } finally {
+      setLoading(false);
+    }
+  };
 
   const handleStartExtraction = () => {
     if (file && !fileId) {
@@ -179,7 +189,7 @@ export const useDocumentExtraction = () => {
   };
 
   const handlePreviewPdf = async () => {
-    if (!fileId || previewUrl) return;  // Avoid re-fetch if already previewed
+    if (!fileId || previewUrl) return;
 
     try {
       const response = await fetch(`${API_BASE}/files/${fileId}/pdf`, {
@@ -189,14 +199,14 @@ export const useDocumentExtraction = () => {
       });
 
       if (!response.ok) {
-        throw new Error('Failed to fetch PDF for preview');
+        throw new Error('Failed to fetch PDF');
       }
 
       const blob = await response.blob();
       const url = URL.createObjectURL(blob);
       setPreviewUrl(url);
     } catch (err) {
-      setError('Failed to preview regenerated PDF');
+      setError('Failed to preview PDF');
     }
   };
 
@@ -230,6 +240,7 @@ export const useDocumentExtraction = () => {
     handleStartExtraction,
     handleDownloadPdf,
     handlePreviewPdf,
+    loadExistingFile,
     reset,
     clearError: () => setError(null),
   };

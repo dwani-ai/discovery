@@ -17,9 +17,6 @@ import ListItem from '@mui/material/ListItem';
 import Paper from '@mui/material/Paper';
 import SendIcon from '@mui/icons-material/Send';
 import SearchIcon from '@mui/icons-material/Search';
-import InputAdornment from '@mui/material/InputAdornment';
-import IconButton from '@mui/material/IconButton';
-import ClearIcon from '@mui/icons-material/Clear';
 import Table from '@mui/material/Table';
 import TableBody from '@mui/material/TableBody';
 import TableCell from '@mui/material/TableCell';
@@ -53,6 +50,7 @@ export default function Digitiser() {
     handleStartExtraction,
     handleDownloadPdf,
     handlePreviewPdf,
+    loadExistingFile,
     reset,
     clearError
   } = useDocumentExtraction();
@@ -65,11 +63,11 @@ export default function Digitiser() {
   >([]);
   const [chatLoading, setChatLoading] = useState(false);
   const [chatError, setChatError] = useState<string | null>(null);
+  const [currentFilename, setCurrentFilename] = useState<string>('');
 
   const [searchQuery, setSearchQuery] = useState('');
   const [showSearchResults, setShowSearchResults] = useState(false);
 
-  // New: List of uploaded files
   const [uploadedFiles, setUploadedFiles] = useState<UploadedFile[]>([]);
   const [filesLoading, setFilesLoading] = useState(true);
 
@@ -77,7 +75,6 @@ export default function Digitiser() {
   const API_BASE = 'http://localhost:8000'
   const API_KEY = import.meta.env.VITE_DWANI_API_KEY;
 
-  // Fetch list of uploaded files
   const fetchUploadedFiles = async () => {
     setFilesLoading(true);
     try {
@@ -89,7 +86,7 @@ export default function Digitiser() {
         setUploadedFiles(data);
       }
     } catch (err) {
-      console.error('Failed to fetch uploaded files');
+      console.error('Failed to fetch files list');
     } finally {
       setFilesLoading(false);
     }
@@ -99,15 +96,14 @@ export default function Digitiser() {
     fetchUploadedFiles();
   }, []);
 
-  // Refresh file list after new upload
   useEffect(() => {
     if (fileId && status === 'completed') {
       fetchUploadedFiles();
     }
   }, [fileId, status]);
 
-  const getStatusColor = (status: string) => {
-    switch (status) {
+  const getStatusColor = (s: string) => {
+    switch (s) {
       case 'pending':
       case 'processing':
         return 'warning';
@@ -120,151 +116,93 @@ export default function Digitiser() {
     }
   };
 
-  const getStatusText = (status: string) => {
-    switch (status) {
-      case 'pending':
-        return 'Waiting';
-      case 'processing':
-        return 'Processing';
-      case 'completed':
-        return 'Ready';
-      case 'failed':
-        return 'Failed';
-      default:
-        return 'Unknown';
+  const getStatusText = (s: string) => {
+    switch (s) {
+      case 'pending': return 'Waiting';
+      case 'processing': return 'Processing';
+      case 'completed': return 'Ready';
+      case 'failed': return 'Failed';
+      default: return 'Unknown';
     }
   };
 
-  const formatDate = (dateString: string) => {
-    return new Date(dateString).toLocaleString();
-  };
+  const formatDate = (dateStr: string) => new Date(dateStr).toLocaleString();
 
   const handleOpenPreview = () => {
     handlePreviewPdf();
     setPreviewOpen(true);
   };
 
-  const handleClosePreview = () => {
-    setPreviewOpen(false);
+  const handleClosePreview = () => setPreviewOpen(false);
+
+  const handleCloseChat = () => {
+    setChatOpen(false);
+    setChatHistory([]);
+    setSearchQuery('');
+    setShowSearchResults(false);
   };
 
-  const loadDocumentForChat = async (fileId: string, filename: string) => {
+  const toggleSearch = () => {
+    setShowSearchResults(prev => !prev);
+    if (showSearchResults) setSearchQuery('');
+  };
+
+  const openChatForFile = async (fileId: string, filename: string) => {
     try {
-      const response = await fetch(`${API_BASE}/files/${fileId}`, {
-        headers: { 'X-API-KEY': API_KEY || '' },
-      });
-
-      if (!response.ok) throw new Error('Failed to load document');
-
-      const data = await response.json();
-
-      if (data.status !== 'completed' || !data.extracted_text) {
-        alert('Document not ready or extraction failed.');
-        return;
+      await loadExistingFile(fileId);
+      if (status === 'completed' && extractedText) {
+        setCurrentFilename(filename);
+        const truncated = extractedText.slice(0, 20000);
+        setChatHistory([
+          { role: 'system', content: `You are a helpful assistant answering questions based solely on the document "${filename}":\n\n${truncated}` },
+          { role: 'assistant', content: `I've loaded "${filename}". Ask me anything!` },
+        ]);
+        setChatOpen(true);
+      } else {
+        alert('Document is not ready yet.');
       }
-
-      // Switch to this document
-      reset(); // Clear current upload state
-      // We don't set file/fileId here since we're not re-uploading
-      // Instead, we just load the text and open chat
-
-      // Manually set extracted text (bypass hook limitations)
-      // Note: This is a workaround since useDocumentExtraction is designed for single upload
-      // In a real app, you'd refactor the hook to support loading existing files
-
-      // For now, we'll use a separate state
-      // But to keep it simple, we'll just open chat with context
-
-      setChatOpen(true);
-      setSearchQuery('');
-      setShowSearchResults(false);
-
-      const truncatedText = data.extracted_text.slice(0, 20000);
-      setChatHistory([
-        {
-          role: 'system',
-          content: `You are a helpful assistant answering questions based solely on the following document "${filename}":\n\n${truncatedText}`,
-        },
-        {
-          role: 'assistant',
-          content: `I've loaded "${filename}". Ask me anything about this document!`,
-        },
-      ]);
-    } catch (err) {
-      alert('Could not load the document for chat.');
+    } catch {
+      alert('Failed to load document.');
     }
   };
 
   const handleOpenChat = () => {
-    setChatOpen(true);
-    setSearchQuery('');
-    setShowSearchResults(false);
-
-    if (chatHistory.length === 0 && extractedText) {
-      const truncatedText = extractedText.slice(0, 20000);
+    if (!extractedText) return;
+    setCurrentFilename(file?.name || 'Document');
+    const truncated = extractedText.slice(0, 20000);
+    if (chatHistory.length === 0) {
       setChatHistory([
-        {
-          role: 'system',
-          content: `You are a helpful assistant answering questions based solely on the following document text:\n\n${truncatedText}`,
-        },
-        {
-          role: 'assistant',
-          content: 'Hello! I’ve loaded the document. You can chat with me or use the search box to find specific text.',
-        },
+        { role: 'system', content: `You are a helpful assistant answering questions based solely on the document text:\n\n${truncated}` },
+        { role: 'assistant', content: 'Hello! I’ve loaded the document. You can chat or search below.' },
       ]);
     }
-  };
-
-  const toggleSearch = () => {
-    setShowSearchResults(!showSearchResults);
-    if (showSearchResults) {
-      setSearchQuery('');
-    }
+    setChatOpen(true);
   };
 
   const handleSendMessage = async () => {
-    if (!userMessage.trim() || chatLoading) return;
+    if (!userMessage.trim() || chatLoading || !fileId) return;
 
     const userMsg = userMessage.trim();
-    const updatedHistory = [...chatHistory, { role: 'user', content: userMsg }];
-    setChatHistory(updatedHistory);
+    const newHistory = [...chatHistory, { role: 'user', content: userMsg }];
+    setChatHistory(newHistory);
     setUserMessage('');
     setChatLoading(true);
     setChatError(null);
 
-    // Determine file_id: prefer current upload, fallback to first in history (from loaded doc)
-    let currentFileId = fileId;
-    if (!currentFileId && uploadedFiles.length > 0) {
-      // Try to extract from system message if loaded from history
-      const systemMsg = chatHistory.find(m => m.role === 'system');
-      if (systemMsg) {
-        // In real app, store file_id in state when loading
-        // Here we skip file_id for loaded docs (chat still works via context)
-      }
-    }
-
     try {
-      const response = await fetch(`${API_BASE}/chat-with-document`, {
+      const res = await fetch(`${API_BASE}/chat-with-document`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
           'X-API-KEY': API_KEY || '',
         },
-        body: JSON.stringify({
-          file_id: currentFileId || null, // Optional if context is in messages
-          messages: updatedHistory,
-        }),
+        body: JSON.stringify({ file_id: fileId, messages: newHistory }),
       });
 
-      if (!response.ok) {
-        const err = await response.json().catch(() => ({}));
-        throw new Error(err.detail || 'Chat request failed');
-      }
+      if (!res.ok) throw new Error((await res.json()).detail || 'Chat failed');
 
-      const data = await response.json();
-      const assistantReply = data.answer?.trim() || 'No response received.';
-
-      setChatHistory([...updatedHistory, { role: 'assistant', content: assistantReply }]);
+      const { answer } = await res.json();
+      setChatHistory([...newHistory, { role: 'assistant', content: answer?.trim() || 'No reply.' }]);
     } catch (err) {
       setChatError(err instanceof Error ? err.message : 'Failed to get response');
     } finally {
@@ -273,106 +211,95 @@ export default function Digitiser() {
   };
 
   return (
-    <Box
-      sx={{
-        display: 'flex',
-        flexDirection: 'column',
-        alignItems: 'center',
-        p: { xs: 4, sm: 6 },
-        pt: { xs: 10, sm: 12 },
-        minHeight: '100vh',
-        bgcolor: 'background.default',
-      }}
-    >
-      <Stack
-        spacing={5}
-        useFlexGap
-        sx={{ width: { xs: '100%', sm: '90%', md: '80%' }, maxWidth: '1000px' }}
-      >
-        <Typography variant="h4" sx={{ textAlign: 'center', fontWeight: 'bold' }}>
-          Document Text Extraction & Chat
-        </Typography>
+    <Box sx={{
+      display: 'flex',
+      flexDirection: 'column',
+      alignItems: 'center',
+      p: { xs: 4, sm: 6 },
+      pt: { xs: 10, sm: 12 },
+      minHeight: '100vh',
+      bgcolor: 'background.default',
+    }}>
+      <Stack spacing={5} sx={{ width: { xs: '100%', sm: '90%', md: '1000px' } }}>
 
-        {/* Uploaded Files Table */}
-        <Box>
-          <Typography variant="h6" gutterBottom>
-            Your Uploaded Documents
-          </Typography>
-          <TableContainer component={Paper} elevation={3}>
-            <Table>
-              <TableHead>
-                <TableRow>
-                  <TableCell><strong>Filename</strong></TableCell>
-                  <TableCell><strong>Uploaded</strong></TableCell>
-                  <TableCell><strong>Status</strong></TableCell>
-                  <TableCell align="center"><strong>Actions</strong></TableCell>
-                </TableRow>
-              </TableHead>
-              <TableBody>
-                {filesLoading ? (
-                  <TableRow>
-                    <TableCell colSpan={4} align="center">
-                      <CircularProgress size={30} />
-                    </TableCell>
-                  </TableRow>
-                ) : uploadedFiles.length === 0 ? (
-                  <TableRow>
-                    <TableCell colSpan={4} align="center" sx={{ color: 'text.secondary' }}>
-                      No documents uploaded yet.
-                    </TableCell>
-                  </TableRow>
-                ) : (
-                  uploadedFiles.map((doc) => (
-                    <TableRow key={doc.file_id} hover>
-                      <TableCell>
-                        <Tooltip title={doc.filename}>
-                          <Typography noWrap sx={{ maxWidth: 300 }}>
-                            {doc.filename}
-                          </Typography>
-                        </Tooltip>
-                      </TableCell>
-                      <TableCell>{formatDate(doc.created_at)}</TableCell>
-                      <TableCell>
-                        <Chip
-                          label={getStatusText(doc.status)}
-                          color={getStatusColor(doc.status)}
-                          size="small"
-                        />
-                      </TableCell>
-                      <TableCell align="center">
-                        <Button
-                          variant="outlined"
-                          size="small"
-                          onClick={() => loadDocumentForChat(doc.file_id, doc.filename)}
-                          disabled={doc.status !== 'completed'}
-                        >
-                          Chat
-                        </Button>
-                      </TableCell>
-                    </TableRow>
-                  ))
-                )}
-              </TableBody>
-            </Table>
-          </TableContainer>
-        </Box>
-
+{/* Uploaded Files Table - Now Scrollable */}
+<Box>
+  <Typography variant="h5" gutterBottom sx={{ mb: 2 }}>
+    Your Uploaded Documents
+  </Typography>
+  <TableContainer 
+    component={Paper} 
+    elevation={2}
+    sx={{ 
+      maxHeight: 400, 
+      overflow: 'auto',
+      borderRadius: 2,
+    }}
+  >
+    <Table stickyHeader>
+      <TableHead>
+        <TableRow>
+          <TableCell sx={{ bgcolor: 'background.paper', fontWeight: 'bold' }}>Filename</TableCell>
+          <TableCell sx={{ bgcolor: 'background.paper', fontWeight: 'bold' }}>Uploaded</TableCell>
+          <TableCell sx={{ bgcolor: 'background.paper', fontWeight: 'bold' }}>Status</TableCell>
+          <TableCell align="center" sx={{ bgcolor: 'background.paper', fontWeight: 'bold' }}>Action</TableCell>
+        </TableRow>
+      </TableHead>
+      <TableBody>
+        {filesLoading ? (
+          <TableRow>
+            <TableCell colSpan={4} align="center" sx={{ py: 4 }}>
+              <CircularProgress />
+            </TableCell>
+          </TableRow>
+        ) : uploadedFiles.length === 0 ? (
+          <TableRow>
+            <TableCell colSpan={4} align="center" sx={{ py: 8, color: 'text.secondary' }}>
+              No documents uploaded yet.
+            </TableCell>
+          </TableRow>
+        ) : (
+          uploadedFiles.map(doc => (
+            <TableRow key={doc.file_id} hover>
+              <TableCell>
+                <Tooltip title={doc.filename}>
+                  <Typography noWrap sx={{ maxWidth: 300 }}>
+                    {doc.filename}
+                  </Typography>
+                </Tooltip>
+              </TableCell>
+              <TableCell>{formatDate(doc.created_at)}</TableCell>
+              <TableCell>
+                <Chip 
+                  label={getStatusText(doc.status)} 
+                  color={getStatusColor(doc.status)} 
+                  size="small" 
+                />
+              </TableCell>
+              <TableCell align="center">
+                <Button
+                  variant="outlined"
+                  size="small"
+                  onClick={() => openChatForFile(doc.file_id, doc.filename)}
+                  disabled={doc.status !== 'completed'}
+                >
+                  Chat
+                </Button>
+              </TableCell>
+            </TableRow>
+          ))
+        )}
+      </TableBody>
+    </Table>
+  </TableContainer>
+</Box>
         <Divider />
 
-        {/* Current Upload Section */}
-        <Typography variant="h6" gutterBottom>
-          Upload New Document
-        </Typography>
+        {/* New Upload Section */}
+        <Typography variant="h5" gutterBottom>Upload New Document</Typography>
 
         <Stack direction={{ xs: 'column', sm: 'row' }} spacing={2} sx={{ alignItems: 'center' }}>
-          <input
-            type="file"
-            accept="application/pdf"
-            onChange={handleFileChange}
-            style={{ display: 'none' }}
-            id="pdf-upload"
-            disabled={!!fileId}
-          />
+          <input type="file" accept="application/pdf" onChange={handleFileChange} style={{ display: 'none' }} id="pdf-upload" disabled={!!fileId} />
           <label htmlFor="pdf-upload">
             <Button variant="outlined" component="span" disabled={!!fileId}>
               {file ? 'Change PDF' : 'Upload PDF'}
@@ -381,7 +308,6 @@ export default function Digitiser() {
 
           <Button
             variant="contained"
-            color="primary"
             onClick={handleStartExtraction}
             disabled={!file || !!fileId || loading}
             startIcon={uploadLoading ? <CircularProgress size={20} color="inherit" /> : null}
@@ -389,11 +315,7 @@ export default function Digitiser() {
             {uploadLoading ? 'Uploading...' : fileId ? 'Processing...' : 'Start Extraction'}
           </Button>
 
-          {fileId && status && (
-            <Button variant="text" onClick={reset}>
-              Reset
-            </Button>
-          )}
+          {fileId && <Button variant="text" onClick={reset}>Reset</Button>}
         </Stack>
 
         {file && <Typography sx={{ color: 'text.secondary' }}>Selected: <strong>{file.name}</strong></Typography>}
@@ -406,87 +328,45 @@ export default function Digitiser() {
           />
         )}
 
-        {error && (
-          <Alert severity="error" sx={{ width: '100%' }} onClose={clearError}>
-            {error}
-          </Alert>
-        )}
+        {error && <Alert severity="error" onClose={clearError} sx={{ width: '100%' }}>{error}</Alert>}
 
         {/* Current Document Result */}
         {extractedText && status === 'completed' && (
-          <Box
-            sx={{
-              p: 3,
-              bgcolor: 'background.paper',
-              borderRadius: 2,
-              border: '1px solid',
-              borderColor: 'divider',
-              boxShadow: 1,
-            }}
-          >
-            <Typography variant="h6" gutterBottom>
-              Current Document: {file?.name}
-            </Typography>
+          <Box sx={{ p: 3, bgcolor: 'background.paper', borderRadius: 2, border: '1px solid', borderColor: 'divider', boxShadow: 1 }}>
+            <Typography variant="h6" gutterBottom>Extracted Text ({file?.name || currentFilename})</Typography>
             <Typography component="pre" sx={{
-              whiteSpace: 'pre-wrap',
-              wordBreak: 'break-word',
-              maxHeight: '50vh',
-              overflow: 'auto',
-              bgcolor: 'grey.50',
-              p: 2,
-              borderRadius: 1,
+              whiteSpace: 'pre-wrap', wordBreak: 'break-word', maxHeight: '60vh', overflow: 'auto',
+              bgcolor: 'grey.50', p: 2, borderRadius: 1, lineHeight: 1.6
             }}>
               {extractedText}
             </Typography>
 
             <Stack direction="row" spacing={2} sx={{ mt: 3, justifyContent: 'flex-end' }}>
-              <Button variant="outlined" onClick={() => navigator.clipboard.writeText(extractedText)}>
-                Copy Text
-              </Button>
-              <Button variant="outlined" onClick={handleOpenPreview}>
-                Preview PDF
-              </Button>
-              <Button variant="contained" onClick={handleDownloadPdf}>
-                Download PDF
-              </Button>
-              <Button variant="outlined" color="secondary" onClick={handleOpenChat}>
-                Chat with Document
-              </Button>
+              <Button variant="outlined" onClick={() => navigator.clipboard.writeText(extractedText)}>Copy Text</Button>
+              <Button variant="outlined" onClick={handleOpenPreview}>Preview PDF</Button>
+              <Button variant="contained" onClick={handleDownloadPdf}>Download PDF</Button>
+              <Button variant="outlined" color="secondary" onClick={handleOpenChat}>Chat with Document</Button>
             </Stack>
           </Box>
         )}
       </Stack>
 
-      {/* Preview & Chat Dialogs remain unchanged */}
-      {/* ... (same as previous version) */}
-
-      {/* PDF Preview Dialog */}
+      {/* Preview Dialog */}
       <Dialog open={previewOpen} onClose={handleClosePreview} maxWidth="lg" fullWidth>
         <DialogTitle>Regenerated PDF Preview</DialogTitle>
         <DialogContent>
-          {previewUrl ? (
-            <iframe src={previewUrl} style={{ width: '100%', height: '70vh', border: 'none' }} />
-          ) : (
-            <CircularProgress sx={{ display: 'block', mx: 'auto' }} />
-          )}
+          {previewUrl ? <iframe src={previewUrl} style={{ width: '100%', height: '80vh', border: 'none' }} /> : <CircularProgress sx={{ display: 'block', mx: 'auto', my: 4 }} />}
         </DialogContent>
-        <DialogActions>
-          <Button onClick={handleClosePreview}>Close</Button>
-        </DialogActions>
+        <DialogActions><Button onClick={handleClosePreview}>Close</Button></DialogActions>
       </Dialog>
 
       {/* Chat Dialog with Search */}
-      <Dialog open={chatOpen} onClose={() => setChatOpen(false)} maxWidth="md" fullWidth>
+      <Dialog open={chatOpen} onClose={handleCloseChat} maxWidth="md" fullWidth>
         <DialogTitle>
           <Stack direction="row" justifyContent="space-between" alignItems="center">
-            <Typography variant="h6">Chat with Document</Typography>
-            <Button
-              startIcon={<SearchIcon />}
-              onClick={toggleSearch}
-              variant={showSearchResults ? "contained" : "outlined"}
-              size="small"
-            >
-              {showSearchResults ? 'Close Search' : 'Search in Document'}
+            <Typography variant="h6">Chat with {currentFilename || 'Document'}</Typography>
+            <Button startIcon={<SearchIcon />} onClick={toggleSearch} variant={showSearchResults ? "contained" : "outlined"} size="small">
+              {showSearchResults ? 'Close Search' : 'Search'}
             </Button>
           </Stack>
         </DialogTitle>
@@ -494,117 +374,55 @@ export default function Digitiser() {
         <DialogContent dividers sx={{ display: 'flex', flexDirection: 'column', height: '70vh' }}>
           {showSearchResults && (
             <Paper variant="outlined" sx={{ p: 2, mb: 2, maxHeight: '40vh', overflow: 'auto', bgcolor: 'grey.50' }}>
-              <Typography variant="subtitle1" gutterBottom>
-                Search Results for: <strong>"{searchQuery || '—'}"</strong>
-              </Typography>
-
+              <Typography variant="subtitle1" gutterBottom>Search "{searchQuery || '—'}"</Typography>
               <TextField
-                fullWidth
-                variant="outlined"
-                placeholder="Search in document..."
-                value={searchQuery}
-                onChange={(e) => setSearchQuery(e.target.value)}
-                sx={{ mb: 2 }}
-                InputProps={{
-                  startAdornment: <InputAdornment position="start"><SearchIcon /></InputAdornment>,
-                  endAdornment: searchQuery && (
-                    <InputAdornment position="end">
-                      <IconButton onClick={() => setSearchQuery('')} size="small">
-                        <ClearIcon />
-                      </IconButton>
-                    </InputAdornment>
-                  ),
-                }}
-                autoFocus
+                fullWidth variant="outlined" placeholder="Search in document..."
+                value={searchQuery} onChange={e => setSearchQuery(e.target.value)}
+                sx={{ mb: 2 }} autoFocus
               />
-
-              {searchQuery.trim() ? (
+              {searchQuery.trim() && (
                 <Typography component="div" sx={{ whiteSpace: 'pre-wrap', fontSize: '0.95rem', lineHeight: 1.6 }}>
-                  <Highlight
-                    highlightClassName="search-highlight"
-                    searchWords={[searchQuery.trim()]}
-                    autoEscape={true}
-                    textToHighlight={extractedText || chatHistory.find(m => m.role === 'system')?.content.split('\n\n').slice(1).join('\n\n') || ''}
-                  />
+                  <Highlight highlightClassName="search-highlight" searchWords={[searchQuery.trim()]} autoEscape textToHighlight={extractedText} />
                 </Typography>
-              ) : (
-                <Typography color="text.secondary">Type a keyword to search.</Typography>
               )}
             </Paper>
           )}
 
           <Paper variant="outlined" sx={{ flexGrow: 1, overflow: 'auto', p: 2, mb: 2 }}>
             <List>
-              {chatHistory.filter(msg => msg.role !== 'system').map((msg, idx) => (
-                <ListItem
-                  key={idx}
-                  sx={{
-                    flexDirection: msg.role === 'user' ? 'row-reverse' : 'row',
-                    textAlign: msg.role === 'user' ? 'right' : 'left',
-                  }}
-                >
-                  <Paper
-                    elevation={1}
-                    sx={{
-                      p: 2,
-                      maxWidth: '80%',
-                      bgcolor: msg.role === 'user' ? 'primary.light' : 'grey.100',
-                      color: msg.role === 'user' ? 'white' : 'text.primary',
-                    }}
-                  >
-                    <Typography variant="subtitle2" fontWeight="bold" gutterBottom>
-                      {msg.role === 'user' ? 'You' : 'Assistant'}
-                    </Typography>
+              {chatHistory.filter(m => m.role !== 'system').map((msg, i) => (
+                <ListItem key={i} sx={{ justifyContent: msg.role === 'user' ? 'flex-end' : 'flex-start' }}>
+                  <Paper elevation={1} sx={{
+                    p: 2, maxWidth: '80%',
+                    bgcolor: msg.role === 'user' ? 'primary.light' : 'grey.100',
+                    color: msg.role === 'user' ? 'white' : 'text.primary'
+                  }}>
+                    <Typography variant="subtitle2" fontWeight="bold">{msg.role === 'user' ? 'You' : 'Assistant'}</Typography>
                     <Typography whiteSpace="pre-wrap">{msg.content}</Typography>
                   </Paper>
                 </ListItem>
               ))}
-              {chatLoading && (
-                <ListItem>
-                  <CircularProgress size={24} />
-                  <Typography sx={{ ml: 2 }}>Thinking...</Typography>
-                </ListItem>
-              )}
+              {chatLoading && <ListItem><CircularProgress size={24} /><Typography sx={{ ml: 2 }}>Thinking...</Typography></ListItem>}
             </List>
           </Paper>
 
-          {chatError && (
-            <Alert severity="error" onClose={() => setChatError(null)} sx={{ mb: 2 }}>
-              {chatError}
-            </Alert>
-          )}
+          {chatError && <Alert severity="error" onClose={() => setChatError(null)} sx={{ mb: 2 }}>{chatError}</Alert>}
 
           <Stack direction="row" spacing={1} alignItems="flex-end">
             <TextField
-              fullWidth
-              multiline
-              maxRows={4}
-              variant="outlined"
+              fullWidth multiline maxRows={4} variant="outlined"
               placeholder="Ask a question..."
-              value={userMessage}
-              onChange={(e) => setUserMessage(e.target.value)}
-              onKeyDown={(e) => {
-                if (e.key === 'Enter' && !e.shiftKey) {
-                  e.preventDefault();
-                  handleSendMessage();
-                }
-              }}
+              value={userMessage} onChange={e => setUserMessage(e.target.value)}
+              onKeyDown={e => e.key === 'Enter' && !e.shiftKey && (e.preventDefault(), handleSendMessage())}
               disabled={chatLoading}
             />
-            <Button
-              variant="contained"
-              onClick={handleSendMessage}
-              disabled={!userMessage.trim() || chatLoading}
-              sx={{ height: 56 }}
-            >
+            <Button variant="contained" onClick={handleSendMessage} disabled={!userMessage.trim() || chatLoading} sx={{ height: 56 }}>
               <SendIcon />
             </Button>
           </Stack>
         </DialogContent>
 
-        <DialogActions>
-          <Button onClick={() => setChatOpen(false)}>Close</Button>
-        </DialogActions>
+        <DialogActions><Button onClick={handleCloseChat}>Close</Button></DialogActions>
       </Dialog>
     </Box>
   );
