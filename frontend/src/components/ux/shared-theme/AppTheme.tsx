@@ -50,7 +50,9 @@ export default function AppTheme({
   }
   return (
     <ThemeProvider theme={theme} disableTransitionOnChange>
-      {children}
+      <div data-mui-color-scheme="light">
+        {children}
+      </div>
     </ThemeProvider>
   );
 }
