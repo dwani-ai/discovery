@@ -1,0 +1,25 @@
+services:
+  discovery-ux:
+    image: dwani/discovery-ux-dev:latest
+    container_name: discovery-ux
+    ports:
+      - "80:5173"
+    environment:
+      - VITE_DWANI_API_KEY=asd
+      - VITE_API_BASE_URL=http://host.docker.internal:8000
+    command: npm run dev -- --host 0.0.0.0
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    depends_on:
+      - fastapi
+
+  fastapi:
+    image: dwani/discovery-server:latest
+    container_name: fastapi_server
+    ports:
+      - "8000:18888"
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    restart: unless-stopped
+    environment:
+      - DWANI_API_BASE_URL=https://

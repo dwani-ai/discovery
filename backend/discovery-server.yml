@@ -5,7 +5,7 @@ services:
     ports:
       - "8000:18888"  # Expose FastAPI server port (adjust if needed)
     environment:
-      - DWANI_API_BASE_URL=http://host.docker.internal:7861
+      - DWANI_API_BASE_URL=https://
     networks:
       - app-network
     extra_hosts:

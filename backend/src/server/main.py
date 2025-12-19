@@ -78,16 +78,14 @@ app = FastAPI(
 app.add_middleware(
     CORSMiddleware,
     allow_origins=[
-        "https://*.hf.space",
-        "https://dwani.ai",
-        "https://*.dwani.ai",
-        "https://dwani-*.hf.space",
-        "http://localhost:11080",
-        "http://localhost:3000",  # React dev
+        "https://app.dwani.ai",
+        "http://localhost:5173",
+        "http://127.0.0.1:5173",
     ],
-    allow_credentials=False,
-    allow_methods=["*"],
-    allow_headers=["*"],
+    allow_credentials=False,  # Keep False if not using cookies/auth
+    allow_methods=["GET", "POST", "OPTIONS", "DELETE"],  # Explicit > *
+    allow_headers=["X-API-KEY", "Content-Type", "Accept"],
+    max_age=600,
 )
 
 # -------------------------- Database Models --------------------------
