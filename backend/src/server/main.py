@@ -78,10 +78,7 @@ app = FastAPI(
 app.add_middleware(
     CORSMiddleware,
     allow_origins=[
-        "https://*.hf.space",
-        "https://dwani.ai",
-        "https://*.dwani.ai",
-        "https://dwani-*.hf.space",
+        "https://app.dwani.ai",
         "http://127.0.0.1:5173",
         "http://localhost:5173",  # React dev
         "http://localhost",       # If accessing frontend via host port 80 or similar
