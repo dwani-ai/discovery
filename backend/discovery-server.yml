@@ -3,7 +3,7 @@ services:
     image: dwani/discovery-server:latest  # Replace with your FastAPI Docker image
     container_name: fastapi_server
     ports:
-      - "80:18888"  # Expose FastAPI server port (adjust if needed)
+      - "8000:18888"  # Expose FastAPI server port (adjust if needed)
     environment:
       - DWANI_API_BASE_URL=https://
     networks:
