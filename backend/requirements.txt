@@ -15,3 +15,5 @@ num2words
 pytz
 pdf2image
 fpdf2
+chromadb
+sentence-transformers

@@ -10,6 +10,21 @@ from datetime import datetime
 from io import BytesIO
 from typing import List, Optional
 
+import chromadb
+from chromadb.utils import embedding_functions
+from typing import List
+import hashlib
+
+# Initialize Chroma (persistent on disk)
+chroma_client = chromadb.PersistentClient(path="./chroma_db")
+collection = chroma_client.get_or_create_collection(name="documents")
+
+# Use a lightweight open-source embedding model
+embedding_function = embedding_functions.SentenceTransformerEmbeddingFunction(
+    model_name="all-MiniLM-L6-v2"  # Fast, good quality, runs locally
+)
+
+
 from fastapi import (
     FastAPI,
     File,
@@ -131,6 +146,20 @@ def get_db() -> Session:
         db.close()
 
 
+def chunk_text(text: str, chunk_size: int = 1000, overlap: int = 200) -> List[str]:
+    """Split text into overlapping chunks suitable for embedding."""
+    words = text.split()
+    chunks = []
+    i = 0
+    while i < len(words):
+        chunk = " ".join(words[i:i + chunk_size])
+        chunks.append(chunk)
+        i += chunk_size - overlap
+        if i >= len(words) and len(chunks) > 1:
+            break
+    return chunks
+
+
 # -------------------------- Pydantic Models --------------------------
 class ExtractionResponse(BaseModel):
     extracted_text: str
@@ -229,8 +258,25 @@ async def extract_and_store(file_id: str, pdf_bytes: bytes, filename: str, db: S
             page_text = response.choices[0].message.content.strip()
             result += page_text + "\n\n"
 
-        db_file.extracted_text = result.strip()
+        cleaned_text = result.strip()
+        db_file.extracted_text = cleaned_text
         db_file.status = FileStatus.COMPLETED
+
+        # === NEW: Create and store embeddings ===
+        chunks = chunk_text(cleaned_text, chunk_size=800, overlap=100)
+        chunk_ids = [hashlib.md5(f"{file_id}_{j}".encode()).hexdigest() for j in range(len(chunks))]
+
+        # Delete old embeddings for this file if reprocessing
+        collection.delete(where={"file_id": file_id})
+
+        collection.add(
+            embeddings=embedding_function(chunks),
+            documents=chunks,
+            metadatas=[{"file_id": file_id, "chunk_index": j} for j in range(len(chunks))],
+            ids=chunk_ids
+        )
+
+        logger.info(f"Embedded {len(chunks)} chunks for file {file_id}")
 
     except Exception as e:
         db_file.status = FileStatus.FAILED
@@ -422,35 +468,62 @@ async def chat_with_document(request: ChatRequest, db: Session = Depends(get_db)
     record = db.query(FileRecord).filter(FileRecord.id == request.file_id).first()
     if not record:
         raise HTTPException(status_code=404, detail="File not found")
-    if record.status != FileStatus.COMPLETED or not record.extracted_text:
-        raise HTTPException(status_code=400, detail="Document extraction not complete")
+    if record.status != FileStatus.COMPLETED:
+        raise HTTPException(status_code=400, detail="Document extraction not complete or failed")
 
-    # Use provided messages; fallback to injecting context if system prompt is missing
-    system_msg = next((m for m in request.messages if m.role == "system"), None)
-    if not system_msg:
-        context = record.extracted_text[:20000]
-        full_messages = [
-            {"role": "system", "content": f"Answer questions based only on this document text:\n\n{context}"},
-            *[m.dict() for m in request.messages]
-        ]
-    else:
-        full_messages = [m.dict() for m in request.messages]
+    # Get the user's latest message (assume last user message is the question)
+    user_messages = [m for m in request.messages if m.role == "user"]
+    if not user_messages:
+        raise HTTPException(status_code=400, detail="No user question found")
+    question = user_messages[-1].content
 
-    model = "gemma3"  # Change if using a different model
+    # Retrieve relevant chunks
+    query_embedding = embedding_function([question])
+    results = collection.query(
+        query_embeddings=query_embedding,
+        n_results=5,  # Top 5 most relevant chunks
+        where={"file_id": request.file_id}
+    )
+
+    relevant_chunks = results['documents'][0] if results['documents'] else []
+    context = "\n\n".join(relevant_chunks)
+
+    if not context.strip():
+        context = "No relevant document content found."
+
+    # Build messages with retrieved context
+    system_prompt = f"""You are an expert assistant answering questions based ONLY on the following document content. 
+Do not use external knowledge. If the answer is not in the provided text, say "I don't know".
+
+Document context:
+{context}
+
+Now answer the user's question accurately and concisely."""
+
+    full_messages = [
+        {"role": "system", "content": system_prompt},
+        *[{"role": m.role, "content": m.content} for m in request.messages]
+    ]
+
+    model = "gemma3"
     client = get_async_openai_client(model)
 
     try:
         response = await client.chat.completions.create(
             model=model,
             messages=full_messages,
-            temperature=0.7,
+            temperature=0.5,
             max_tokens=1024,
         )
         answer = response.choices[0].message.content.strip()
-        return {"answer": answer}
+        return {
+            "answer": answer,
+            "sources": len(relevant_chunks)  # Optional: tell frontend how many chunks used
+        }
     except Exception as e:
         logger.error(f"Chat failed for file {request.file_id}: {e}")
         raise HTTPException(status_code=500, detail="Failed to generate response")
+
 
 # -------------------------- Run Server --------------------------
 if __name__ == "__main__":
