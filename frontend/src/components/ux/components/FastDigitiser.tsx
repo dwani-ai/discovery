@@ -148,67 +148,87 @@ export default function Digitiser() {
   };
 
   const openChatForFile = async (fileId: string, filename: string) => {
-    try {
-      await loadExistingFile(fileId);
-      if (status === 'completed' && extractedText) {
-        setCurrentFilename(filename);
-        const truncated = extractedText.slice(0, 20000);
-        setChatHistory([
-          { role: 'system' as const, content: `You are a helpful assistant answering questions based solely on the document "${filename}":\n\n${truncated}` },
-          { role: 'assistant' as const, content: `I've loaded "${filename}". Ask me anything!` },
-        ]);
-        setChatOpen(true);
-      } else {
-        alert('Document is not ready yet.');
-      }
-    } catch {
-      alert('Failed to load document.');
+  try {
+    await loadExistingFile(fileId);
+    if (status === 'completed') {
+      setCurrentFilename(filename);
+      setChatHistory([
+        { role: 'assistant' as const, content: `I've loaded "${filename}". Ask me anything!` },
+      ]);
+      setChatOpen(true);
+    } else {
+      alert('Document is not ready yet. Please wait for extraction to complete.');
     }
-  };
+  } catch {
+    alert('Failed to load document.');
+  }
+};
+  
 
   const handleOpenChat = () => {
-    if (!extractedText) return;
-    setCurrentFilename(file?.name || 'Document');
-    const truncated = extractedText.slice(0, 20000);
-    if (chatHistory.length === 0) {
-      setChatHistory([
-        { role: 'system' as const, content: `You are a helpful assistant answering questions based solely on the document text:\n\n${truncated}` },
-        { role: 'assistant' as const, content: 'Hello! I’ve loaded the document. You can chat or search below.' },
-      ]);
+  if (!extractedText || !fileId) return;
+  setCurrentFilename(file?.name || 'Document');
+
+  // Clear any old system messages and start fresh
+  setChatHistory([
+    { role: 'assistant' as const, content: 'Hello! I’ve loaded the document. Ask me anything about it.' },
+  ]);
+  setChatOpen(true);
+};
+
+const handleSendMessage = async () => {
+  if (!userMessage.trim() || chatLoading || !fileId) return;
+
+  const userMsg = userMessage.trim();
+  setUserMessage('');
+  setChatLoading(true);
+  setChatError(null);
+
+  // Append user message immediately for UI responsiveness
+  const newUserMessage: Message = { role: 'user', content: userMsg };
+  setChatHistory(prev => [...prev, newUserMessage]);
+
+  try {
+    const res = await fetch(`${API_BASE}/chat-with-document`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'X-API-KEY': API_KEY || '',
+      },
+      body: JSON.stringify({
+        file_id: fileId,
+        messages: [
+          // Only send visible conversation history (no hidden system prompt)
+          ...chatHistory.filter(m => m.role !== 'system'),
+          newUserMessage
+        ]
+      }),
+    });
+
+    if (!res.ok) {
+      const errData = await res.json().catch(() => ({}));
+      throw new Error(errData.detail || 'Chat failed');
     }
-    setChatOpen(true);
-  };
 
-  const handleSendMessage = async () => {
-    if (!userMessage.trim() || chatLoading || !fileId) return;
+    const data = await res.json();
+    const answer = data.answer?.trim() || 'No response.';
 
-    const userMsg = userMessage.trim();
-    setUserMessage('');
-    setChatLoading(true);
-    setChatError(null);
+    // Optional: show how many sources were used
+    const sourcesInfo = data.sources !== undefined ? ` (${data.sources} source${data.sources === 1 ? '' : 's'})` : '';
 
-    setChatHistory(prev => [...prev, { role: 'user' as const, content: userMsg }]);
+    setChatHistory(prev => [
+      ...prev,
+      { role: 'assistant' as const, content: answer + sourcesInfo }
+    ]);
+  } catch (err) {
+    setChatError(err instanceof Error ? err.message : 'Failed to get response');
+    // Remove the pending user message on error
+    setChatHistory(prev => prev.filter(m => m !== newUserMessage));
+  } finally {
+    setChatLoading(false);
+  }
+};
 
-    try {
-      const res = await fetch(`${API_BASE}/chat-with-document`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'X-API-KEY': API_KEY || '',
-        },
-        body: JSON.stringify({ file_id: fileId, messages: [...chatHistory, { role: 'user' as const, content: userMsg }] }),
-      });
-
-      if (!res.ok) throw new Error((await res.json()).detail || 'Chat failed');
-
-      const { answer } = await res.json();
-      setChatHistory(prev => [...prev, { role: 'assistant' as const, content: answer?.trim() || 'No reply.' }]);
-    } catch (err) {
-      setChatError(err instanceof Error ? err.message : 'Failed to get response');
-    } finally {
-      setChatLoading(false);
-    }
-  };
 
   return (
     <Box sx={{
@@ -407,7 +427,12 @@ export default function Digitiser() {
                   </Paper>
                 </ListItem>
               ))}
-              {chatLoading && <ListItem><CircularProgress size={24} /><Typography sx={{ ml: 2 }}>Thinking...</Typography></ListItem>}
+              {chatLoading && (
+                <ListItem>
+                  <CircularProgress size={24} />
+                  <Typography sx={{ ml: 2 }}>Searching document and thinking...</Typography>
+                </ListItem>
+              )}            
             </List>
           </Paper>
 
