@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import Box from '@mui/material/Box';
 import Button from '@mui/material/Button';
 import Stack from '@mui/material/Stack';
@@ -24,6 +24,7 @@ import TableContainer from '@mui/material/TableContainer';
 import TableHead from '@mui/material/TableHead';
 import TableRow from '@mui/material/TableRow';
 import Tooltip from '@mui/material/Tooltip';
+import Checkbox from '@mui/material/Checkbox';
 
 import Highlight from 'react-highlight-words';
 
@@ -63,13 +64,17 @@ export default function Digitiser() {
   const [chatHistory, setChatHistory] = useState<Message[]>([]);
   const [chatLoading, setChatLoading] = useState(false);
   const [chatError, setChatError] = useState<string | null>(null);
-  const [currentFilename, setCurrentFilename] = useState<string>('');
 
   const [searchQuery, setSearchQuery] = useState('');
   const [showSearchResults, setShowSearchResults] = useState(false);
 
   const [uploadedFiles, setUploadedFiles] = useState<UploadedFile[]>([]);
   const [filesLoading, setFilesLoading] = useState(true);
+
+  // Multi-file selection & active chat state
+  const [selectedFileIds, setSelectedFileIds] = useState<Set<string>>(new Set());
+  const [activeChatFileIds, setActiveChatFileIds] = useState<string[]>([]);
+  const [activeChatFilenames, setActiveChatFilenames] = useState<string[]>([]);
 
   const API_BASE = import.meta.env.VITE_DWANI_API_BASE_URL || 'https://discovery-server.dwani.ai';
   //const API_BASE = 'http://localhost:8000'
@@ -140,6 +145,8 @@ export default function Digitiser() {
     setChatHistory([]);
     setSearchQuery('');
     setShowSearchResults(false);
+    setActiveChatFileIds([]);
+    setActiveChatFilenames([]);
   };
 
   const toggleSearch = () => {
@@ -147,88 +154,71 @@ export default function Digitiser() {
     if (showSearchResults) setSearchQuery('');
   };
 
-  const openChatForFile = async (fileId: string, filename: string) => {
-  try {
-    await loadExistingFile(fileId);
-    if (status === 'completed') {
-      setCurrentFilename(filename);
-      setChatHistory([
-        { role: 'assistant' as const, content: `I've loaded "${filename}". Ask me anything!` },
-      ]);
-      setChatOpen(true);
-    } else {
-      alert('Document is not ready yet. Please wait for extraction to complete.');
-    }
-  } catch {
-    alert('Failed to load document.');
-  }
-};
-  
+  // Open chat with one or more files
+  const openChatForFiles = (fileIds: string[], filenames: string[]) => {
+    if (fileIds.length === 0) return;
 
-  const handleOpenChat = () => {
-  if (!extractedText || !fileId) return;
-  setCurrentFilename(file?.name || 'Document');
+    setActiveChatFileIds(fileIds);
+    setActiveChatFilenames(filenames);
+    setSelectedFileIds(new Set()); // clear selection after opening
 
-  // Clear any old system messages and start fresh
-  setChatHistory([
-    { role: 'assistant' as const, content: 'Hello! I’ve loaded the document. Ask me anything about it.' },
-  ]);
-  setChatOpen(true);
-};
+    const count = filenames.length;
+    const title = count === 1 ? filenames[0] : `${count} documents`;
 
-const handleSendMessage = async () => {
-  if (!userMessage.trim() || chatLoading || !fileId) return;
-
-  const userMsg = userMessage.trim();
-  setUserMessage('');
-  setChatLoading(true);
-  setChatError(null);
-
-  // Append user message immediately for UI responsiveness
-  const newUserMessage: Message = { role: 'user', content: userMsg };
-  setChatHistory(prev => [...prev, newUserMessage]);
-
-  try {
-    const res = await fetch(`${API_BASE}/chat-with-document`, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'X-API-KEY': API_KEY || '',
+    setChatHistory([
+      {
+        role: 'assistant',
+        content: `I've loaded ${count} document${count > 1 ? 's' : ''}: ${filenames.join(', ')}.\n\nAsk me anything — I'll search across all of them!`
       },
-      body: JSON.stringify({
-        file_id: fileId,
-        messages: [
-          // Only send visible conversation history (no hidden system prompt)
-          ...chatHistory.filter(m => m.role !== 'system'),
-          newUserMessage
-        ]
-      }),
-    });
-
-    if (!res.ok) {
-      const errData = await res.json().catch(() => ({}));
-      throw new Error(errData.detail || 'Chat failed');
-    }
-
-    const data = await res.json();
-    const answer = data.answer?.trim() || 'No response.';
-
-    // Optional: show how many sources were used
-    const sourcesInfo = data.sources !== undefined ? ` (${data.sources} source${data.sources === 1 ? '' : 's'})` : '';
-
-    setChatHistory(prev => [
-      ...prev,
-      { role: 'assistant' as const, content: answer + sourcesInfo }
     ]);
-  } catch (err) {
-    setChatError(err instanceof Error ? err.message : 'Failed to get response');
-    // Remove the pending user message on error
-    setChatHistory(prev => prev.filter(m => m !== newUserMessage));
-  } finally {
-    setChatLoading(false);
-  }
-};
+    setChatOpen(true);
+  };
 
+  const handleSendMessage = async () => {
+    if (!userMessage.trim() || chatLoading || activeChatFileIds.length === 0) return;
+
+    const userMsg = userMessage.trim();
+    setUserMessage('');
+    setChatLoading(true);
+    setChatError(null);
+
+    const newUserMessage: Message = { role: 'user', content: userMsg };
+    setChatHistory(prev => [...prev, newUserMessage]);
+
+    try {
+      const res = await fetch(`${API_BASE}/chat-with-document`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'X-API-KEY': API_KEY || '',
+        },
+        body: JSON.stringify({
+          file_ids: activeChatFileIds, // array of file IDs
+          messages: [
+            ...chatHistory.filter(m => m.role !== 'system'),
+            newUserMessage
+          ]
+        }),
+      });
+
+      if (!res.ok) {
+        const errData = await res.json().catch(() => ({}));
+        throw new Error(errData.detail || 'Chat failed');
+      }
+
+      const { answer } = await res.json();
+      setChatHistory(prev => [
+        ...prev,
+        { role: 'assistant', content: answer?.trim() || 'No reply.' }
+      ]);
+    } catch (err) {
+      setChatError(err instanceof Error ? err.message : 'Failed to get response');
+      // Remove the pending user message on error
+      setChatHistory(prev => prev.slice(0, -1));
+    } finally {
+      setChatLoading(false);
+    }
+  };
 
   return (
     <Box sx={{
@@ -242,23 +232,46 @@ const handleSendMessage = async () => {
     }}>
       <Stack spacing={5} sx={{ width: { xs: '100%', sm: '90%', md: '1000px' } }}>
 
-        {/* Uploaded Files Table - Now Scrollable */}
+        {/* Multi-select Alert */}
+        {selectedFileIds.size > 0 && (
+          <Alert
+            severity="info"
+            action={
+              <Button
+                color="inherit"
+                size="small"
+                variant="outlined"
+                onClick={() => {
+                  const selected = uploadedFiles
+                    .filter(f => selectedFileIds.has(f.file_id))
+                    .filter(f => f.status === 'completed');
+                  if (selected.length > 0) {
+                    openChatForFiles(
+                      selected.map(f => f.file_id),
+                      selected.map(f => f.filename)
+                    );
+                  }
+                }}
+              >
+                Chat with {selectedFileIds.size} selected
+              </Button>
+            }
+            sx={{ mb: 2 }}
+          >
+            {selectedFileIds.size} document{selectedFileIds.size > 1 ? 's' : ''} selected
+          </Alert>
+        )}
+
+        {/* Uploaded Files Table */}
         <Box>
           <Typography variant="h5" gutterBottom sx={{ mb: 2 }}>
             Your Uploaded Documents
           </Typography>
-          <TableContainer 
-            component={Paper} 
-            elevation={2}
-            sx={{ 
-              maxHeight: 400, 
-              overflow: 'auto',
-              borderRadius: 2,
-            }}
-          >
+          <TableContainer component={Paper} elevation={2} sx={{ maxHeight: 400, overflow: 'auto', borderRadius: 2 }}>
             <Table stickyHeader>
               <TableHead>
                 <TableRow>
+                  <TableCell padding="checkbox" sx={{ bgcolor: 'background.paper' }} />
                   <TableCell sx={{ bgcolor: 'background.paper', fontWeight: 'bold' }}>Filename</TableCell>
                   <TableCell sx={{ bgcolor: 'background.paper', fontWeight: 'bold' }}>Uploaded</TableCell>
                   <TableCell sx={{ bgcolor: 'background.paper', fontWeight: 'bold' }}>Status</TableCell>
@@ -268,19 +281,31 @@ const handleSendMessage = async () => {
               <TableBody>
                 {filesLoading ? (
                   <TableRow>
-                    <TableCell colSpan={4} align="center" sx={{ py: 4 }}>
+                    <TableCell colSpan={5} align="center" sx={{ py: 4 }}>
                       <CircularProgress />
                     </TableCell>
                   </TableRow>
                 ) : uploadedFiles.length === 0 ? (
                   <TableRow>
-                    <TableCell colSpan={4} align="center" sx={{ py: 8, color: 'text.secondary' }}>
+                    <TableCell colSpan={5} align="center" sx={{ py: 8, color: 'text.secondary' }}>
                       No documents uploaded yet.
                     </TableCell>
                   </TableRow>
                 ) : (
                   uploadedFiles.map(doc => (
-                    <TableRow key={doc.file_id} hover>
+                    <TableRow key={doc.file_id} hover selected={selectedFileIds.has(doc.file_id)}>
+                      <TableCell padding="checkbox">
+                        <Checkbox
+                          checked={selectedFileIds.has(doc.file_id)}
+                          onChange={(e) => {
+                            const newSet = new Set(selectedFileIds);
+                            if (e.target.checked) newSet.add(doc.file_id);
+                            else newSet.delete(doc.file_id);
+                            setSelectedFileIds(newSet);
+                          }}
+                          disabled={doc.status !== 'completed'}
+                        />
+                      </TableCell>
                       <TableCell>
                         <Tooltip title={doc.filename}>
                           <Typography noWrap sx={{ maxWidth: 300 }}>
@@ -290,20 +315,16 @@ const handleSendMessage = async () => {
                       </TableCell>
                       <TableCell>{formatDate(doc.created_at)}</TableCell>
                       <TableCell>
-                        <Chip 
-                          label={getStatusText(doc.status)} 
-                          color={getStatusColor(doc.status)} 
-                          size="small" 
-                        />
+                        <Chip label={getStatusText(doc.status)} color={getStatusColor(doc.status)} size="small" />
                       </TableCell>
                       <TableCell align="center">
                         <Button
                           variant="outlined"
                           size="small"
-                          onClick={() => openChatForFile(doc.file_id, doc.filename)}
+                          onClick={() => openChatForFiles([doc.file_id], [doc.filename])}
                           disabled={doc.status !== 'completed'}
                         >
-                          Chat
+                          Chat (Single)
                         </Button>
                       </TableCell>
                     </TableRow>
@@ -313,6 +334,7 @@ const handleSendMessage = async () => {
             </Table>
           </TableContainer>
         </Box>
+
         <Divider />
 
         {/* New Upload Section */}
@@ -350,24 +372,19 @@ const handleSendMessage = async () => {
 
         {error && <Alert severity="error" onClose={clearError} sx={{ width: '100%' }}>{error}</Alert>}
 
-        {/* Current Document Result */}
-        {extractedText && status === 'completed' && (
-          <Box sx={{ p: 3, bgcolor: 'background.paper', borderRadius: 2, border: '1px solid', borderColor: 'divider', boxShadow: 1 }}>
-            <Typography variant="h6" gutterBottom>Extracted Text ({file?.name || currentFilename})</Typography>
-            <Typography component="pre" sx={{
-              whiteSpace: 'pre-wrap', wordBreak: 'break-word', maxHeight: '60vh', overflow: 'auto',
-              bgcolor: 'grey.50', p: 2, borderRadius: 1, lineHeight: 1.6
-            }}>
-              {extractedText}
-            </Typography>
+        {/* Simplified success message (no huge text preview) */}
+        {status === 'completed' && fileId && (
+          <Alert severity="success" sx={{ mt: 2 }}>
+            Extraction complete! You can now chat with the document or download the clean PDF.
+          </Alert>
+        )}
 
-            <Stack direction="row" spacing={2} sx={{ mt: 3, justifyContent: 'flex-end' }}>
-              <Button variant="outlined" onClick={() => navigator.clipboard.writeText(extractedText)}>Copy Text</Button>
-              <Button variant="outlined" onClick={handleOpenPreview}>Preview PDF</Button>
-              <Button variant="contained" onClick={handleDownloadPdf}>Download PDF</Button>
-              <Button variant="outlined" color="secondary" onClick={handleOpenChat}>Chat with Document</Button>
-            </Stack>
-          </Box>
+        {/* Optional: Keep preview/download buttons for newly uploaded file */}
+        {status === 'completed' && fileId && (
+          <Stack direction="row" spacing={2} sx={{ mt: 2, justifyContent: 'flex-end' }}>
+            <Button variant="outlined" onClick={handleOpenPreview}>Preview PDF</Button>
+            <Button variant="contained" onClick={handleDownloadPdf}>Download PDF</Button>
+          </Stack>
         )}
       </Stack>
 
@@ -380,33 +397,44 @@ const handleSendMessage = async () => {
         <DialogActions><Button onClick={handleClosePreview}>Close</Button></DialogActions>
       </Dialog>
 
-      {/* Chat Dialog with Search */}
+      {/* Chat Dialog */}
       <Dialog open={chatOpen} onClose={handleCloseChat} maxWidth="md" fullWidth>
         <DialogTitle>
           <Stack direction="row" justifyContent="space-between" alignItems="center">
-            <Typography variant="h6">Chat with {currentFilename || 'Document'}</Typography>
-            <Button startIcon={<SearchIcon />} onClick={toggleSearch} variant={showSearchResults ? "contained" : "outlined"} size="small">
+            <Typography variant="h6">
+              Chat with {activeChatFilenames.length === 1
+                ? activeChatFilenames[0]
+                : `${activeChatFilenames.length} documents`}
+            </Typography>
+            <Button
+              startIcon={<SearchIcon />}
+              onClick={toggleSearch}
+              variant={showSearchResults ? "contained" : "outlined"}
+              size="small"
+            >
               {showSearchResults ? 'Close Search' : 'Search'}
             </Button>
           </Stack>
         </DialogTitle>
 
         <DialogContent dividers sx={{ display: 'flex', flexDirection: 'column', height: '70vh' }}>
-          {showSearchResults && (
+          {showSearchResults && activeChatFileIds.length === 1 && extractedText && (
             <Paper variant="outlined" sx={{ p: 2, mb: 2, maxHeight: '40vh', overflow: 'auto', bgcolor: 'grey.50' }}>
-              <Typography variant="subtitle1" gutterBottom>Search "{searchQuery || '—'}"</Typography>
+              <Typography variant="subtitle1" gutterBottom>Search in document</Typography>
               <TextField
-                fullWidth variant="outlined" placeholder="Search in document..."
-                value={searchQuery} onChange={e => setSearchQuery(e.target.value)}
-                sx={{ mb: 2 }} autoFocus
+                fullWidth variant="outlined" placeholder="Search..."
+                value={searchQuery}
+                onChange={e => setSearchQuery(e.target.value)}
+                sx={{ mb: 2 }}
+                autoFocus
               />
               {searchQuery.trim() && (
                 <Typography component="div" sx={{ whiteSpace: 'pre-wrap', fontSize: '0.95rem', lineHeight: 1.6 }}>
-                  <Highlight 
-                    highlightClassName="search-highlight" 
-                    searchWords={[searchQuery.trim()]} 
-                    autoEscape 
-                    textToHighlight={extractedText ?? ''} 
+                  <Highlight
+                    highlightClassName="search-highlight"
+                    searchWords={[searchQuery.trim()]}
+                    autoEscape
+                    textToHighlight={extractedText}
                   />
                 </Typography>
               )}
@@ -418,11 +446,14 @@ const handleSendMessage = async () => {
               {chatHistory.filter(m => m.role !== 'system').map((msg, i) => (
                 <ListItem key={i} sx={{ justifyContent: msg.role === 'user' ? 'flex-end' : 'flex-start' }}>
                   <Paper elevation={1} sx={{
-                    p: 2, maxWidth: '80%',
+                    p: 2,
+                    maxWidth: '80%',
                     bgcolor: msg.role === 'user' ? 'primary.light' : 'grey.100',
                     color: msg.role === 'user' ? 'white' : 'text.primary'
                   }}>
-                    <Typography variant="subtitle2" fontWeight="bold">{msg.role === 'user' ? 'You' : 'Assistant'}</Typography>
+                    <Typography variant="subtitle2" fontWeight="bold">
+                      {msg.role === 'user' ? 'You' : 'Assistant'}
+                    </Typography>
                     <Typography whiteSpace="pre-wrap">{msg.content}</Typography>
                   </Paper>
                 </ListItem>
@@ -430,9 +461,9 @@ const handleSendMessage = async () => {
               {chatLoading && (
                 <ListItem>
                   <CircularProgress size={24} />
-                  <Typography sx={{ ml: 2 }}>Searching document and thinking...</Typography>
+                  <Typography sx={{ ml: 2 }}>Searching documents and thinking...</Typography>
                 </ListItem>
-              )}            
+              )}
             </List>
           </Paper>
 
@@ -440,19 +471,30 @@ const handleSendMessage = async () => {
 
           <Stack direction="row" spacing={1} alignItems="flex-end">
             <TextField
-              fullWidth multiline maxRows={4} variant="outlined"
-              placeholder="Ask a question..."
-              value={userMessage} onChange={e => setUserMessage(e.target.value)}
+              fullWidth
+              multiline
+              maxRows={4}
+              variant="outlined"
+              placeholder="Ask a question about the document(s)..."
+              value={userMessage}
+              onChange={e => setUserMessage(e.target.value)}
               onKeyDown={e => e.key === 'Enter' && !e.shiftKey && (e.preventDefault(), handleSendMessage())}
               disabled={chatLoading}
             />
-            <Button variant="contained" onClick={handleSendMessage} disabled={!userMessage.trim() || chatLoading} sx={{ height: 56 }}>
+            <Button
+              variant="contained"
+              onClick={handleSendMessage}
+              disabled={!userMessage.trim() || chatLoading}
+              sx={{ height: 56 }}
+            >
               <SendIcon />
             </Button>
           </Stack>
         </DialogContent>
 
-        <DialogActions><Button onClick={handleCloseChat}>Close</Button></DialogActions>
+        <DialogActions>
+          <Button onClick={handleCloseChat}>Close</Button>
+        </DialogActions>
       </Dialog>
     </Box>
   );

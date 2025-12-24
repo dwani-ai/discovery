@@ -455,50 +455,56 @@ def list_files(db: Session = Depends(get_db), limit: int = 20):
         for f in files
     ]
 
+
 class ChatMessage(BaseModel):
-    role: str  # "system", "user", or "assistant"
+    role: str
     content: str
 
-class ChatRequest(BaseModel):
-    file_id: str
+class MultiChatRequest(BaseModel):
+    file_ids: List[str]  # Changed from single file_id to list
     messages: List[ChatMessage]
 
 @app.post("/chat-with-document", tags=["Files"])
-async def chat_with_document(request: ChatRequest, db: Session = Depends(get_db)):
-    record = db.query(FileRecord).filter(FileRecord.id == request.file_id).first()
-    if not record:
-        raise HTTPException(status_code=404, detail="File not found")
-    if record.status != FileStatus.COMPLETED:
-        raise HTTPException(status_code=400, detail="Document extraction not complete or failed")
+async def chat_with_document(request: MultiChatRequest, db: Session = Depends(get_db)):
+    if not request.file_ids:
+        raise HTTPException(status_code=400, detail="At least one file_id required")
 
-    # Get the user's latest message (assume last user message is the question)
+    # Validate all files exist and are completed
+    records = db.query(FileRecord).filter(FileRecord.id.in_(request.file_ids)).all()
+    if len(records) != len(request.file_ids):
+        raise HTTPException(status_code=404, detail="One or more files not found")
+
+    for record in records:
+        if record.status != FileStatus.COMPLETED:
+            raise HTTPException(status_code=400, detail=f"Document {record.filename} is not ready")
+
+    # Get user's latest question
     user_messages = [m for m in request.messages if m.role == "user"]
     if not user_messages:
-        raise HTTPException(status_code=400, detail="No user question found")
+        raise HTTPException(status_code=400, detail="No user question provided")
     question = user_messages[-1].content
 
-    # Retrieve relevant chunks
+    # Retrieve relevant chunks from ALL selected files
     query_embedding = embedding_function([question])
     results = collection.query(
         query_embeddings=query_embedding,
-        n_results=5,  # Top 5 most relevant chunks
-        where={"file_id": request.file_id}
+        n_results=8,  # Increase slightly since searching multiple docs
+        where={"file_id": {"$in": request.file_ids}}  # Chroma supports $in
     )
 
     relevant_chunks = results['documents'][0] if results['documents'] else []
     context = "\n\n".join(relevant_chunks)
 
     if not context.strip():
-        context = "No relevant document content found."
+        context = "No relevant information found in the selected documents."
 
-    # Build messages with retrieved context
-    system_prompt = f"""You are an expert assistant answering questions based ONLY on the following document content. 
-Do not use external knowledge. If the answer is not in the provided text, say "I don't know".
+    system_prompt = f"""You are an expert assistant answering based ONLY on the provided document excerpts from multiple files.
+Do not use external knowledge. If the answer isn't in the context, say "I don't know".
 
-Document context:
+Context from selected documents:
 {context}
 
-Now answer the user's question accurately and concisely."""
+Answer accurately and cite the source filename if possible."""
 
     full_messages = [
         {"role": "system", "content": system_prompt},
@@ -516,13 +522,23 @@ Now answer the user's question accurately and concisely."""
             max_tokens=1024,
         )
         answer = response.choices[0].message.content.strip()
+
+        # Count how many unique files contributed
+        source_file_ids = set(meta['file_id'] for meta in results['metadatas'][0]) if results['metadatas'] else set()
+        filenames = [r.filename for r in records if r.id in source_file_ids]
+
+        sources_info = f" (from {len(source_file_ids)} document{'' if len(source_file_ids)==1 else 's'})"
+        if len(filenames) <= 3:
+            sources_info = f" (from: {', '.join(filenames)})"
+
         return {
-            "answer": answer,
-            "sources": len(relevant_chunks)  # Optional: tell frontend how many chunks used
+            "answer": answer + sources_info,
+            "sources": len(relevant_chunks)
         }
     except Exception as e:
-        logger.error(f"Chat failed for file {request.file_id}: {e}")
+        logger.error(f"Multi-chat failed: {e}")
         raise HTTPException(status_code=500, detail="Failed to generate response")
+    
 
 
 # -------------------------- Run Server --------------------------
