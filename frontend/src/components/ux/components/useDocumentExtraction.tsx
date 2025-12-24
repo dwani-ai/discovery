@@ -32,7 +32,7 @@ export const useDocumentExtraction = () => {
   const pollIntervalRef = useRef<NodeJS.Timeout | null>(null);
 
   const API_BASE = import.meta.env.VITE_DWANI_API_BASE_URL || 'https://discovery-server.dwani.ai';
-  //const API_BASE = 'http://localhost:8000'
+  // const API_BASE = 'http://localhost:8000';
   const API_KEY = import.meta.env.VITE_DWANI_API_KEY;
 
   const handleFileChange = (event: React.ChangeEvent<HTMLInputElement>) => {
@@ -64,7 +64,7 @@ export const useDocumentExtraction = () => {
         method: 'POST',
         headers: {
           'accept': 'application/json',
-          'X-API-KEY': API_KEY,
+          'X-API-KEY': API_KEY || '',
         },
         body: formData,
       });
@@ -78,9 +78,7 @@ export const useDocumentExtraction = () => {
       setFileId(data.file_id);
       setStatus('pending');
     } catch (err) {
-      setError(
-        err instanceof Error ? err.message : 'Failed to upload file'
-      );
+      setError(err instanceof Error ? err.message : 'Failed to upload file');
       setFileId(null);
     } finally {
       setUploadLoading(false);
@@ -92,12 +90,13 @@ export const useDocumentExtraction = () => {
       const response = await fetch(`${API_BASE}/files/${id}`, {
         headers: {
           'accept': 'application/json',
-          'X-API-KEY': API_KEY,
+          'X-API-KEY': API_KEY || '',
         },
       });
 
       if (!response.ok) {
-        throw new Error('Failed to fetch file details');
+        const err = await response.json().catch(() => ({}));
+        throw new Error(err.detail || 'Failed to fetch file details');
       }
 
       const data: FileRetrieveResponse = await response.json();
@@ -113,7 +112,7 @@ export const useDocumentExtraction = () => {
     }
   };
 
-  // Poll for status updates
+  // Polling for status updates
   useEffect(() => {
     if (!fileId || !status || ['completed', 'failed'].includes(status)) {
       if (pollIntervalRef.current) {
@@ -124,9 +123,11 @@ export const useDocumentExtraction = () => {
       return;
     }
 
+    // Initial fetch
     setLoading(true);
     fetchFileDetails(fileId);
 
+    // Start polling
     pollIntervalRef.current = setInterval(() => {
       fetchFileDetails(fileId);
     }, 3000);
@@ -134,6 +135,7 @@ export const useDocumentExtraction = () => {
     return () => {
       if (pollIntervalRef.current) {
         clearInterval(pollIntervalRef.current);
+        pollIntervalRef.current = null;
       }
     };
   }, [fileId, status]);
@@ -141,7 +143,7 @@ export const useDocumentExtraction = () => {
   const loadExistingFile = async (id: string) => {
     setLoading(true);
     setError(null);
-    setFile(null); // No file for existing
+    setFile(null); // No local file when loading existing
     setFileId(id);
     try {
       const data = await fetchFileDetails(id);
@@ -149,6 +151,8 @@ export const useDocumentExtraction = () => {
       if (data.status === 'completed') {
         setExtractedText(data.extracted_text || '');
       }
+    } catch {
+      setError('Failed to load document details');
     } finally {
       setLoading(false);
     }
@@ -166,19 +170,20 @@ export const useDocumentExtraction = () => {
     try {
       const response = await fetch(`${API_BASE}/files/${fileId}/pdf`, {
         headers: {
-          'X-API-KEY': API_KEY,
+          'X-API-KEY': API_KEY || '',
         },
       });
 
       if (!response.ok) {
-        throw new Error('Failed to download PDF');
+        const err = await response.json().catch(() => ({}));
+        throw new Error(err.detail || 'Failed to download PDF');
       }
 
       const blob = await response.blob();
       const url = URL.createObjectURL(blob);
       const a = document.createElement('a');
       a.href = url;
-      a.download = `regenerated_${file?.name || 'document.pdf'}`;
+      a.download = `clean_${file?.name || 'document.pdf'}`;
       document.body.appendChild(a);
       a.click();
       document.body.removeChild(a);
@@ -194,7 +199,7 @@ export const useDocumentExtraction = () => {
     try {
       const response = await fetch(`${API_BASE}/files/${fileId}/pdf`, {
         headers: {
-          'X-API-KEY': API_KEY,
+          'X-API-KEY': API_KEY || '',
         },
       });
 
@@ -224,8 +229,11 @@ export const useDocumentExtraction = () => {
     }
     if (pollIntervalRef.current) {
       clearInterval(pollIntervalRef.current);
+      pollIntervalRef.current = null;
     }
   };
+
+  const clearError = () => setError(null);
 
   return {
     file,
@@ -242,6 +250,6 @@ export const useDocumentExtraction = () => {
     handlePreviewPdf,
     loadExistingFile,
     reset,
-    clearError: () => setError(null),
+    clearError,
   };
 };

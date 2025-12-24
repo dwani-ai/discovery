@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef } from 'react';
+import { useState, useEffect } from 'react';
 import Box from '@mui/material/Box';
 import Button from '@mui/material/Button';
 import Stack from '@mui/material/Stack';
@@ -53,7 +53,6 @@ export default function Digitiser() {
     handleStartExtraction,
     handleDownloadPdf,
     handlePreviewPdf,
-    loadExistingFile,
     reset,
     clearError
   } = useDocumentExtraction();
@@ -163,8 +162,7 @@ export default function Digitiser() {
     setSelectedFileIds(new Set()); // clear selection after opening
 
     const count = filenames.length;
-    const title = count === 1 ? filenames[0] : `${count} documents`;
-
+    
     setChatHistory([
       {
         role: 'assistant',
