@@ -432,7 +432,6 @@ def download_regenerated_pdf(file_id: str, db: Session = Depends(get_db)):
     )
 
 
-
 @app.get("/files/", tags=["Files"])
 def list_files(db: Session = Depends(get_db), limit: int = 20):
     files = db.query(FileRecord).order_by(FileRecord.created_at.desc()).limit(limit).all()
@@ -477,20 +476,25 @@ async def chat_with_document(request: MultiChatRequest, db: Session = Depends(ge
     metadatas = results['metadatas'][0] if results['metadatas'] else []
     distances = results['distances'][0] if results['distances'] else []
 
+    # FIXED: More permissive relevance threshold
     context_parts = []
     sources = []
+    min_relevance = 0.25  # Lowered from implicit ~0.4 (distance < 0.6) to allow more context
+
     for i, (chunk, meta) in enumerate(zip(relevant_chunks, metadatas)):
-        if distances[i] > 0.6:
+        distance = distances[i]
+        relevance = 1 - distance
+        if relevance < min_relevance:
             continue
         context_parts.append(chunk)
         filename = next(r.filename for r in records if r.id == meta['file_id'])
         sources.append({
             "filename": filename,
             "excerpt": chunk.strip(),
-            "relevance_score": round(1 - distances[i], 3)
+            "relevance_score": round(relevance, 3)
         })
 
-    context = "\n\n".join(context_parts) if context_parts else "No highly relevant content found."
+    context = "\n\n".join(context_parts) if context_parts else "No sufficiently relevant content found."
 
     system_prompt = f"""You are an expert assistant. Answer based ONLY on the provided document excerpts.
 If the question cannot be answered from the context, say "I don't know".

@@ -44,6 +44,7 @@ import PictureAsPdfIcon from '@mui/icons-material/PictureAsPdf';
 import DeleteIcon from '@mui/icons-material/Delete';
 import LanguageIcon from '@mui/icons-material/Language';
 import DownloadIcon from '@mui/icons-material/Download';
+import ClearIcon from '@mui/icons-material/Clear'; // NEW IMPORT
 
 import Highlight from 'react-highlight-words';
 
@@ -111,6 +112,9 @@ export default function Digitiser() {
 
   const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
   const [filesToDelete, setFilesToDelete] = useState<string[]>([]);
+
+  // NEW: State for clear chat confirmation
+  const [clearChatDialogOpen, setClearChatDialogOpen] = useState(false);
 
   const API_BASE = import.meta.env.VITE_DWANI_API_BASE_URL || 'https://discovery-server.dwani.ai';
   const API_KEY = import.meta.env.VITE_DWANI_API_KEY;
@@ -529,6 +533,26 @@ export default function Digitiser() {
     }
   };
 
+  // NEW: Clear chat handler
+  const handleClearChat = () => {
+    if (!currentConversationId) return;
+
+    // Remove conversation from saved list
+    setConversations(prev => prev.filter(c => c.id !== currentConversationId));
+
+    // Reset chat history to welcome message
+    const isGlobal = currentConversationId === GLOBAL_CHAT_ID;
+    const welcomeMsg: Message = {
+      role: 'assistant',
+      content: isGlobal
+        ? `**Global Chat** loaded with **${activeChatFileIds.length} completed document${activeChatFileIds.length > 1 ? 's' : ''}**.\n\nAsk anything — I'll search across your entire library!`
+        : `I've loaded ${activeChatFileIds.length} document${activeChatFileIds.length > 1 ? 's' : ''}: ${activeChatFilenames.join(', ')}.\n\nAsk me anything — I'll search across all of them!`
+    };
+    setChatHistory([welcomeMsg]);
+
+    setClearChatDialogOpen(false);
+  };
+
   // Combined files list with deduplication
   const serverFileIds = new Set(uploadedFiles.map(f => f.file_id));
 
@@ -803,7 +827,6 @@ export default function Digitiser() {
           </Typography>
           <Divider sx={{ mb: 2 }} />
           <List>
-            {/* Global Chat - Always at top */}
             {completedCount > 0 && (
               <ListItem disablePadding>
                 <ListItemButton
@@ -839,7 +862,6 @@ export default function Digitiser() {
               </ListItem>
             )}
 
-            {/* Regular conversations */}
             {conversations.filter(c => !c.isGlobal).length === 0 && completedCount === 0 ? (
               <Typography color="text.secondary" sx={{ p: 4, textAlign: 'center' }}>
                 No conversations yet.<br />Upload documents and start chatting!
@@ -906,6 +928,22 @@ export default function Digitiser() {
         </DialogActions>
       </Dialog>
 
+      {/* NEW: Clear Chat Confirmation Dialog */}
+      <Dialog open={clearChatDialogOpen} onClose={() => setClearChatDialogOpen(false)}>
+        <DialogTitle>Clear Chat</DialogTitle>
+        <DialogContent>
+          <DialogContentText>
+            Are you sure you want to clear this conversation? This will remove all messages but keep the document context.
+          </DialogContentText>
+        </DialogContent>
+        <DialogActions>
+          <Button onClick={() => setClearChatDialogOpen(false)}>Cancel</Button>
+          <Button onClick={handleClearChat} color="warning" variant="contained">
+            Clear Chat
+          </Button>
+        </DialogActions>
+      </Dialog>
+
       {/* Chat Dialog */}
       <Dialog open={chatOpen} onClose={handleCloseChat} maxWidth="md" fullWidth>
         <DialogTitle>
@@ -917,14 +955,26 @@ export default function Digitiser() {
                   ? activeChatFilenames[0]
                   : `${activeChatFilenames.length} documents`}
             </Typography>
-            <Button
-              startIcon={<SearchIcon />}
-              onClick={toggleSearch}
-              variant={showSearchResults ? "contained" : "outlined"}
-              size="small"
-            >
-              {showSearchResults ? 'Close Search' : 'Search'}
-            </Button>
+            <Stack direction="row" spacing={1}>
+              <Button
+                startIcon={<SearchIcon />}
+                onClick={toggleSearch}
+                variant={showSearchResults ? "contained" : "outlined"}
+                size="small"
+              >
+                {showSearchResults ? 'Close Search' : 'Search'}
+              </Button>
+              {/* NEW: Clear Chat Button */}
+              <Button
+                startIcon={<ClearIcon />}
+                onClick={() => setClearChatDialogOpen(true)}
+                color="inherit"
+                size="small"
+                variant="outlined"
+              >
+                Clear
+              </Button>
+            </Stack>
           </Stack>
         </DialogTitle>
 
