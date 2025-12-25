@@ -14,6 +14,9 @@ import DialogTitle from '@mui/material/DialogTitle';
 import TextField from '@mui/material/TextField';
 import List from '@mui/material/List';
 import ListItem from '@mui/material/ListItem';
+import ListItemText from '@mui/material/ListItemText';
+import ListItemAvatar from '@mui/material/ListItemAvatar';
+import Avatar from '@mui/material/Avatar';
 import Paper from '@mui/material/Paper';
 import SendIcon from '@mui/icons-material/Send';
 import SearchIcon from '@mui/icons-material/Search';
@@ -29,6 +32,10 @@ import Accordion from '@mui/material/Accordion';
 import AccordionSummary from '@mui/material/AccordionSummary';
 import AccordionDetails from '@mui/material/AccordionDetails';
 import ExpandMoreIcon from '@mui/icons-material/ExpandMore';
+import Drawer from '@mui/material/Drawer';
+import IconButton from '@mui/material/IconButton';
+import MenuIcon from '@mui/icons-material/Menu';
+import DescriptionIcon from '@mui/icons-material/Description';
 
 import Highlight from 'react-highlight-words';
 
@@ -53,6 +60,17 @@ type Message = {
   sources?: Source[];
 };
 
+interface Conversation {
+  id: string;
+  fileIds: string[];
+  filenames: string[];
+  messages: Message[];
+  lastUpdated: number;
+  preview: string;
+}
+
+const STORAGE_KEY = 'dwani_conversations';
+
 export default function Digitiser() {
   const {
     file,
@@ -73,16 +91,19 @@ export default function Digitiser() {
 
   const [previewOpen, setPreviewOpen] = useState(false);
   const [chatOpen, setChatOpen] = useState(false);
+  const [drawerOpen, setDrawerOpen] = useState(false);
   const [userMessage, setUserMessage] = useState('');
   const [chatHistory, setChatHistory] = useState<Message[]>([]);
   const [chatLoading, setChatLoading] = useState(false);
   const [chatError, setChatError] = useState<string | null>(null);
+  const [currentConversationId, setCurrentConversationId] = useState<string | null>(null);
 
   const [searchQuery, setSearchQuery] = useState('');
   const [showSearchResults, setShowSearchResults] = useState(false);
 
   const [uploadedFiles, setUploadedFiles] = useState<UploadedFile[]>([]);
   const [filesLoading, setFilesLoading] = useState(true);
+  const [conversations, setConversations] = useState<Conversation[]>([]);
 
   // Multi-file selection & active chat state
   const [selectedFileIds, setSelectedFileIds] = useState<Set<string>>(new Set());
@@ -91,6 +112,26 @@ export default function Digitiser() {
 
   const API_BASE = import.meta.env.VITE_DWANI_API_BASE_URL || 'https://discovery-server.dwani.ai';
   const API_KEY = import.meta.env.VITE_DWANI_API_KEY;
+
+  // Load conversations from localStorage on mount
+  useEffect(() => {
+    const saved = localStorage.getItem(STORAGE_KEY);
+    if (saved) {
+      try {
+        const parsed: Conversation[] = JSON.parse(saved);
+        setConversations(parsed.sort((a, b) => b.lastUpdated - a.lastUpdated));
+      } catch (e) {
+        console.error('Failed to parse saved conversations');
+      }
+    }
+  }, []);
+
+  // Save conversations to localStorage whenever they change
+  useEffect(() => {
+    if (conversations.length > 0) {
+      localStorage.setItem(STORAGE_KEY, JSON.stringify(conversations));
+    }
+  }, [conversations]);
 
   const fetchUploadedFiles = async () => {
     setFilesLoading(true);
@@ -145,6 +186,18 @@ export default function Digitiser() {
 
   const formatDate = (dateStr: string) => new Date(dateStr).toLocaleString();
 
+  const formatRelativeTime = (timestamp: number) => {
+    const now = Date.now();
+    const diff = now - timestamp;
+    const minutes = Math.floor(diff / 60000);
+    if (minutes < 60) return `${minutes}m ago`;
+    const hours = Math.floor(minutes / 60);
+    if (hours < 24) return `${hours}h ago`;
+    const days = Math.floor(hours / 24);
+    if (days < 7) return `${days}d ago`;
+    return new Date(timestamp).toLocaleDateString();
+  };
+
   const handleOpenPreview = () => {
     handlePreviewPdf();
     setPreviewOpen(true);
@@ -152,37 +205,78 @@ export default function Digitiser() {
 
   const handleClosePreview = () => setPreviewOpen(false);
 
-  const handleCloseChat = () => {
-    setChatOpen(false);
-    setChatHistory([]);
-    setSearchQuery('');
-    setShowSearchResults(false);
-    setActiveChatFileIds([]);
-    setActiveChatFilenames([]);
-  };
+  const toggleDrawer = () => setDrawerOpen(prev => !prev);
 
   const toggleSearch = () => {
     setShowSearchResults(prev => !prev);
     if (showSearchResults) setSearchQuery('');
   };
 
-  // Open chat with one or more files
+  // Unique ID for a set of files (sorted to be order-independent)
+  const getConversationId = (fileIds: string[]) => {
+    return fileIds.sort().join('|');
+  };
+
+  // Open or resume a conversation
   const openChatForFiles = (fileIds: string[], filenames: string[]) => {
     if (fileIds.length === 0) return;
 
+    const convId = getConversationId(fileIds);
+    const existing = conversations.find(c => c.id === convId);
+
     setActiveChatFileIds(fileIds);
     setActiveChatFilenames(filenames);
-    setSelectedFileIds(new Set()); // clear selection
+    setSelectedFileIds(new Set());
+    setCurrentConversationId(convId);
 
-    const count = filenames.length;
-
-    setChatHistory([
-      {
+    if (existing) {
+      setChatHistory(existing.messages);
+    } else {
+      const welcomeMsg: Message = {
         role: 'assistant',
-        content: `I've loaded ${count} document${count > 1 ? 's' : ''}: ${filenames.join(', ')}.\n\nAsk me anything — I'll search across all of them!`
-      },
-    ]);
+        content: `I've loaded ${fileIds.length} document${fileIds.length > 1 ? 's' : ''}: ${filenames.join(', ')}.\n\nAsk me anything — I'll search across all of them!`
+      };
+      setChatHistory([welcomeMsg]);
+
+      const newConv: Conversation = {
+        id: convId,
+        fileIds,
+        filenames,
+        messages: [welcomeMsg],
+        lastUpdated: Date.now(),
+        preview: welcomeMsg.content.slice(0, 60) + '...'
+      };
+      setConversations(prev => [newConv, ...prev]);
+    }
     setChatOpen(true);
+  };
+
+  // Save the current conversation
+  const saveCurrentConversation = () => {
+    if (!currentConversationId || activeChatFileIds.length === 0) return;
+
+    setConversations(prev => {
+      const filtered = prev.filter(c => c.id !== currentConversationId);
+      const lastVisibleMsg = chatHistory.filter(m => m.role !== 'system').slice(-1)[0];
+      const preview = lastVisibleMsg ? lastVisibleMsg.content.slice(0, 60) + '...' : 'New conversation';
+
+      const updatedConv: Conversation = {
+        id: currentConversationId,
+        fileIds: activeChatFileIds,
+        filenames: activeChatFilenames,
+        messages: chatHistory,
+        lastUpdated: Date.now(),
+        preview
+      };
+      return [updatedConv, ...filtered];
+    });
+  };
+
+  const handleCloseChat = () => {
+    saveCurrentConversation();
+    setChatOpen(false);
+    setSearchQuery('');
+    setShowSearchResults(false);
   };
 
   const handleSendMessage = async () => {
@@ -196,7 +290,7 @@ export default function Digitiser() {
     const newUserMessage: Message = { role: 'user', content: userMsg };
     setChatHistory(prev => [...prev, newUserMessage]);
 
-    // Temporary placeholder for assistant response
+    // Placeholder for assistant response
     const tempAssistantMessage: Message = { role: 'assistant', content: '', sources: [] };
     setChatHistory(prev => [...prev, tempAssistantMessage]);
 
@@ -225,20 +319,16 @@ export default function Digitiser() {
       const answer = data.answer?.trim() || 'No reply.';
       const sources: Source[] = data.sources || [];
 
-      // Replace temp message with full answer + sources
       setChatHistory(prev => {
         const updated = [...prev];
-        updated[updated.length - 1] = {
-          role: 'assistant',
-          content: answer,
-          sources
-        };
+        updated[updated.length - 1] = { role: 'assistant', content: answer, sources };
         return updated;
       });
 
+      saveCurrentConversation();
+
     } catch (err) {
       setChatError(err instanceof Error ? err.message : 'Failed to get response');
-      // Remove user message and temp assistant on error
       setChatHistory(prev => prev.slice(0, -2));
     } finally {
       setChatLoading(false);
@@ -255,6 +345,14 @@ export default function Digitiser() {
       minHeight: '100vh',
       bgcolor: 'background.default',
     }}>
+      {/* Header with Conversations Drawer Toggle */}
+      <Stack direction="row" spacing={2} alignItems="center" sx={{ width: { xs: '100%', sm: '90%', md: '1000px' }, mb: 4 }}>
+        <IconButton onClick={toggleDrawer} size="large" edge="start">
+          <MenuIcon />
+        </IconButton>
+        <Typography variant="h5">dwani.ai – Document Intelligence</Typography>
+      </Stack>
+
       <Stack spacing={5} sx={{ width: { xs: '100%', sm: '90%', md: '1000px' } }}>
 
         {/* Multi-select Alert */}
@@ -289,7 +387,7 @@ export default function Digitiser() {
 
         {/* Uploaded Files Table */}
         <Box>
-          <Typography variant="h5" gutterBottom sx={{ mb: 2 }}>
+          <Typography variant="h6" gutterBottom>
             Your Uploaded Documents
           </Typography>
           <TableContainer component={Paper} elevation={2} sx={{ maxHeight: 400, overflow: 'auto', borderRadius: 2 }}>
@@ -349,7 +447,7 @@ export default function Digitiser() {
                           onClick={() => openChatForFiles([doc.file_id], [doc.filename])}
                           disabled={doc.status !== 'completed'}
                         >
-                          Chat (Single)
+                          Chat
                         </Button>
                       </TableCell>
                     </TableRow>
@@ -362,8 +460,8 @@ export default function Digitiser() {
 
         <Divider />
 
-        {/* New Upload Section */}
-        <Typography variant="h5" gutterBottom>Upload New Document</Typography>
+        {/* Upload Section */}
+        <Typography variant="h6" gutterBottom>Upload New Document</Typography>
 
         <Stack direction={{ xs: 'column', sm: 'row' }} spacing={2} sx={{ alignItems: 'center' }}>
           <input type="file" accept="application/pdf" onChange={handleFileChange} style={{ display: 'none' }} id="pdf-upload" disabled={!!fileId} />
@@ -397,28 +495,87 @@ export default function Digitiser() {
 
         {error && <Alert severity="error" onClose={clearError} sx={{ width: '100%' }}>{error}</Alert>}
 
-        {/* Simplified success message */}
         {status === 'completed' && fileId && (
-          <Alert severity="success" sx={{ mt: 2 }}>
-            Extraction complete! You can now chat with the document or download the clean PDF.
-          </Alert>
-        )}
-
-        {status === 'completed' && fileId && (
-          <Stack direction="row" spacing={2} sx={{ mt: 2, justifyContent: 'flex-end' }}>
-            <Button variant="outlined" onClick={handleOpenPreview}>Preview PDF</Button>
-            <Button variant="contained" onClick={handleDownloadPdf}>Download PDF</Button>
-          </Stack>
+          <>
+            <Alert severity="success" sx={{ mt: 2 }}>
+              Extraction complete! Select documents above to start chatting.
+            </Alert>
+            <Stack direction="row" spacing={2} sx={{ mt: 2, justifyContent: 'flex-end' }}>
+              <Button variant="outlined" onClick={handleOpenPreview}>Preview PDF</Button>
+              <Button variant="contained" onClick={handleDownloadPdf}>Download PDF</Button>
+            </Stack>
+          </>
         )}
       </Stack>
+
+      {/* Conversations Drawer */}
+      <Drawer anchor="left" open={drawerOpen} onClose={toggleDrawer}>
+        <Box sx={{ width: 340, p: 3 }}>
+          <Typography variant="h6" gutterBottom>
+            Conversations ({conversations.length})
+          </Typography>
+          <Divider sx={{ mb: 2 }} />
+          <List>
+            {conversations.length === 0 ? (
+              <Typography color="text.secondary" sx={{ p: 4, textAlign: 'center' }}>
+                No conversations yet.<br />Start chatting with your documents!
+              </Typography>
+            ) : (
+              conversations.map(conv => (
+                <ListItem
+                  button
+                  key={conv.id}
+                  onClick={() => {
+                    openChatForFiles(conv.fileIds, conv.filenames);
+                    setDrawerOpen(false);
+                  }}
+                  sx={{
+                    borderRadius: 2,
+                    mb: 1,
+                    bgcolor: 'background.paper',
+                    boxShadow: 1,
+                    '&:hover': { boxShadow: 3 }
+                  }}
+                >
+                  <ListItemAvatar>
+                    <Avatar sx={{ bgcolor: 'primary.main' }}>
+                      <DescriptionIcon />
+                    </Avatar>
+                  </ListItemAvatar>
+                  <ListItemText
+                    primary={`${conv.filenames.length} document${conv.filenames.length > 1 ? 's' : ''}`}
+                    secondary={
+                      <>
+                        <Typography component="span" variant="body2" color="text.primary" noWrap>
+                          {conv.preview}
+                        </Typography>
+                        <br />
+                        <Typography component="span" variant="caption" color="text.secondary">
+                          {formatRelativeTime(conv.lastUpdated)}
+                        </Typography>
+                      </>
+                    }
+                  />
+                </ListItem>
+              ))
+            )}
+          </List>
+        </Box>
+      </Drawer>
 
       {/* Preview Dialog */}
       <Dialog open={previewOpen} onClose={handleClosePreview} maxWidth="lg" fullWidth>
         <DialogTitle>Regenerated PDF Preview</DialogTitle>
         <DialogContent>
-          {previewUrl ? <iframe src={previewUrl} style={{ width: '100%', height: '80vh', border: 'none' }} /> : <CircularProgress sx={{ display: 'block', mx: 'auto', my: 4 }} />}
+          {previewUrl ? (
+            <iframe src={previewUrl} style={{ width: '100%', height: '80vh', border: 'none' }} />
+          ) : (
+            <CircularProgress sx={{ display: 'block', mx: 'auto', my: 4 }} />
+          )}
         </DialogContent>
-        <DialogActions><Button onClick={handleClosePreview}>Close</Button></DialogActions>
+        <DialogActions>
+          <Button onClick={handleClosePreview}>Close</Button>
+        </DialogActions>
       </Dialog>
 
       {/* Chat Dialog with Source Citations */}
@@ -442,11 +599,14 @@ export default function Digitiser() {
         </DialogTitle>
 
         <DialogContent dividers sx={{ display: 'flex', flexDirection: 'column', height: '70vh' }}>
+          {/* Optional intra-document search (only for single file) */}
           {showSearchResults && activeChatFileIds.length === 1 && extractedText && (
             <Paper variant="outlined" sx={{ p: 2, mb: 2, maxHeight: '40vh', overflow: 'auto', bgcolor: 'grey.50' }}>
               <Typography variant="subtitle1" gutterBottom>Search in document</Typography>
               <TextField
-                fullWidth variant="outlined" placeholder="Search..."
+                fullWidth
+                variant="outlined"
+                placeholder="Search..."
                 value={searchQuery}
                 onChange={e => setSearchQuery(e.target.value)}
                 sx={{ mb: 2 }}
@@ -465,6 +625,7 @@ export default function Digitiser() {
             </Paper>
           )}
 
+          {/* Chat Messages */}
           <Paper variant="outlined" sx={{ flexGrow: 1, overflow: 'auto', p: 2, mb: 2 }}>
             <List>
               {chatHistory.filter(m => m.role !== 'system').map((msg, i) => (
@@ -486,9 +647,9 @@ export default function Digitiser() {
                       {msg.content || <i>Thinking...</i>}
                     </Typography>
 
-                    {/* Source Citations Accordion */}
+                    {/* Source Citations */}
                     {msg.sources && msg.sources.length > 0 && (
-                      <Accordion elevation={0} sx={{ bgcolor: 'background.paper', mt: 1 }}>
+                      <Accordion elevation={0} sx={{ bgcolor: 'transparent', mt: 1 }}>
                         <AccordionSummary
                           expandIcon={<ExpandMoreIcon />}
                           sx={{ fontSize: '0.875rem', minHeight: '36px', '& .MuiAccordionSummary-content': { my: 0.5 } }}
@@ -532,6 +693,7 @@ export default function Digitiser() {
 
           {chatError && <Alert severity="error" onClose={() => setChatError(null)} sx={{ mb: 2 }}>{chatError}</Alert>}
 
+          {/* Message Input */}
           <Stack direction="row" spacing={1} alignItems="flex-end">
             <TextField
               fullWidth
@@ -541,7 +703,12 @@ export default function Digitiser() {
               placeholder="Ask a question about the document(s)..."
               value={userMessage}
               onChange={e => setUserMessage(e.target.value)}
-              onKeyDown={e => e.key === 'Enter' && !e.shiftKey && (e.preventDefault(), handleSendMessage())}
+              onKeyDown={e => {
+                if (e.key === 'Enter' && !e.shiftKey) {
+                  e.preventDefault();
+                  handleSendMessage();
+                }
+              }}
               disabled={chatLoading}
             />
             <Button
