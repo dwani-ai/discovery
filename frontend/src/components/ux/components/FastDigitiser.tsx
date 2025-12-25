@@ -18,6 +18,7 @@ import ListItemText from '@mui/material/ListItemText';
 import ListItemAvatar from '@mui/material/ListItemAvatar';
 import Avatar from '@mui/material/Avatar';
 import Paper from '@mui/material/Paper';
+import LinearProgress from '@mui/material/LinearProgress';
 import SendIcon from '@mui/icons-material/Send';
 import SearchIcon from '@mui/icons-material/Search';
 import Table from '@mui/material/Table';
@@ -36,16 +37,23 @@ import Drawer from '@mui/material/Drawer';
 import IconButton from '@mui/material/IconButton';
 import MenuIcon from '@mui/icons-material/Menu';
 import DescriptionIcon from '@mui/icons-material/Description';
+import UploadFileIcon from '@mui/icons-material/UploadFile';
 
 import Highlight from 'react-highlight-words';
-
-import { useDocumentExtraction } from './useDocumentExtraction';
 
 interface UploadedFile {
   file_id: string;
   filename: string;
   status: string;
   created_at: string;
+}
+
+interface LocalUpload {
+  file: File;
+  progress: number;
+  status: 'uploading' | 'pending' | 'processing' | 'completed' | 'failed';
+  file_id?: string;
+  error?: string;
 }
 
 interface Source {
@@ -72,23 +80,6 @@ interface Conversation {
 const STORAGE_KEY = 'dwani_conversations';
 
 export default function Digitiser() {
-  const {
-    file,
-    fileId,
-    extractedText,
-    status,
-    loading,
-    uploadLoading,
-    error,
-    previewUrl,
-    handleFileChange,
-    handleStartExtraction,
-    handleDownloadPdf,
-    handlePreviewPdf,
-    reset,
-    clearError
-  } = useDocumentExtraction();
-
   const [previewOpen, setPreviewOpen] = useState(false);
   const [chatOpen, setChatOpen] = useState(false);
   const [drawerOpen, setDrawerOpen] = useState(false);
@@ -105,6 +96,10 @@ export default function Digitiser() {
   const [filesLoading, setFilesLoading] = useState(true);
   const [conversations, setConversations] = useState<Conversation[]>([]);
 
+  // Multiple file upload state
+  const [localUploads, setLocalUploads] = useState<LocalUpload[]>([]);
+  const [isUploading, setIsUploading] = useState(false);
+
   // Multi-file selection & active chat state
   const [selectedFileIds, setSelectedFileIds] = useState<Set<string>>(new Set());
   const [activeChatFileIds, setActiveChatFileIds] = useState<string[]>([]);
@@ -113,7 +108,7 @@ export default function Digitiser() {
   const API_BASE = import.meta.env.VITE_DWANI_API_BASE_URL || 'https://discovery-server.dwani.ai';
   const API_KEY = import.meta.env.VITE_DWANI_API_KEY;
 
-  // Load conversations from localStorage on mount
+  // Load conversations
   useEffect(() => {
     const saved = localStorage.getItem(STORAGE_KEY);
     if (saved) {
@@ -126,7 +121,6 @@ export default function Digitiser() {
     }
   }, []);
 
-  // Save conversations to localStorage whenever they change
   useEffect(() => {
     if (conversations.length > 0) {
       localStorage.setItem(STORAGE_KEY, JSON.stringify(conversations));
@@ -152,18 +146,15 @@ export default function Digitiser() {
 
   useEffect(() => {
     fetchUploadedFiles();
+    const interval = setInterval(fetchUploadedFiles, 5000); // Refresh every 5s
+    return () => clearInterval(interval);
   }, []);
-
-  useEffect(() => {
-    if (fileId && status === 'completed') {
-      fetchUploadedFiles();
-    }
-  }, [fileId, status]);
 
   const getStatusColor = (s: string) => {
     switch (s) {
       case 'pending':
       case 'processing':
+      case 'uploading':
         return 'warning';
       case 'completed':
         return 'success';
@@ -176,6 +167,7 @@ export default function Digitiser() {
 
   const getStatusText = (s: string) => {
     switch (s) {
+      case 'uploading': return 'Uploading';
       case 'pending': return 'Waiting';
       case 'processing': return 'Processing';
       case 'completed': return 'Ready';
@@ -185,7 +177,6 @@ export default function Digitiser() {
   };
 
   const formatDate = (dateStr: string) => new Date(dateStr).toLocaleString();
-
   const formatRelativeTime = (timestamp: number) => {
     const now = Date.now();
     const diff = now - timestamp;
@@ -198,26 +189,91 @@ export default function Digitiser() {
     return new Date(timestamp).toLocaleDateString();
   };
 
-  const handleOpenPreview = () => {
-    handlePreviewPdf();
-    setPreviewOpen(true);
+  const handleFileChange = (event: React.ChangeEvent<HTMLInputElement>) => {
+    const files = event.target.files;
+    if (!files || files.length === 0) return;
+
+    const newUploads: LocalUpload[] = [];
+    for (let i = 0; i < files.length; i++) {
+      const file = files[i];
+      if (file.type === 'application/pdf') {
+        newUploads.push({
+          file,
+          progress: 0,
+          status: 'uploading'
+        });
+      }
+    }
+
+    if (newUploads.length > 0) {
+      setLocalUploads(prev => [...prev, ...newUploads]);
+      uploadNextFile([...localUploads, ...newUploads]);
+    }
+
+    // Reset input
+    event.target.value = '';
   };
 
-  const handleClosePreview = () => setPreviewOpen(false);
+  const uploadNextFile = async (queue: LocalUpload[]) => {
+    if (queue.length === 0 || isUploading) return;
+
+    setIsUploading(true);
+    const current = queue[0];
+    const remaining = queue.slice(1);
+
+    try {
+      const formData = new FormData();
+      formData.append('file', current.file);
+
+      const response = await fetch(`${API_BASE}/files/upload`, {
+        method: 'POST',
+        headers: {
+          'accept': 'application/json',
+          'X-API-KEY': API_KEY || '',
+        },
+        body: formData,
+      });
+
+      if (!response.ok) {
+        const err = await response.json().catch(() => ({}));
+        throw new Error(err.detail || 'Upload failed');
+      }
+
+      const data = await response.json();
+      setLocalUploads(prev => prev.map(u =>
+        u === current
+          ? { ...u, file_id: data.file_id, status: 'pending', progress: 100 }
+          : u
+      ));
+
+    } catch (err) {
+      setLocalUploads(prev => prev.map(u =>
+        u === current
+          ? { ...u, status: 'failed', error: err instanceof Error ? err.message : 'Upload failed' }
+          : u
+      ));
+    } finally {
+      setTimeout(() => {
+        setLocalUploads(prev => prev.filter(u => u !== current));
+        uploadNextFile(remaining);
+        if (remaining.length === 0) setIsUploading(false);
+      }, 1000);
+    }
+  };
+
+  const handleOpenPreview = () => {
+    // Preview logic can be extended per file later
+    alert('Preview for multiple files coming soon!');
+  };
 
   const toggleDrawer = () => setDrawerOpen(prev => !prev);
-
   const toggleSearch = () => {
     setShowSearchResults(prev => !prev);
     if (showSearchResults) setSearchQuery('');
   };
 
-  // Unique ID for a set of files (sorted to be order-independent)
-  const getConversationId = (fileIds: string[]) => {
-    return fileIds.sort().join('|');
-  };
+  const getConversationId = (fileIds: string[]) => fileIds.sort().join('|');
 
-  // Open or resume a conversation
   const openChatForFiles = (fileIds: string[], filenames: string[]) => {
     if (fileIds.length === 0) return;
 
@@ -251,7 +307,6 @@ export default function Digitiser() {
     setChatOpen(true);
   };
 
-  // Save the current conversation
   const saveCurrentConversation = () => {
     if (!currentConversationId || activeChatFileIds.length === 0) return;
 
@@ -290,7 +345,6 @@ export default function Digitiser() {
     const newUserMessage: Message = { role: 'user', content: userMsg };
     setChatHistory(prev => [...prev, newUserMessage]);
 
-    // Placeholder for assistant response
     const tempAssistantMessage: Message = { role: 'assistant', content: '', sources: [] };
     setChatHistory(prev => [...prev, tempAssistantMessage]);
 
@@ -335,6 +389,20 @@ export default function Digitiser() {
     }
   };
 
+  // Combine server files + local uploads for display
+  const allFiles = [
+    ...uploadedFiles.map(f => ({ ...f, source: 'server' as const })),
+    ...localUploads.map(u => ({
+      file_id: u.file_id || `local-${Math.random()}`,
+      filename: u.file.name,
+      status: u.status,
+      created_at: new Date().toISOString(),
+      source: 'local' as const,
+      progress: u.progress,
+      error: u.error
+    }))
+  ].sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime());
+
   return (
     <Box sx={{
       display: 'flex',
@@ -345,7 +413,6 @@ export default function Digitiser() {
       minHeight: '100vh',
       bgcolor: 'background.default',
     }}>
-      {/* Header with Conversations Drawer Toggle */}
       <Stack direction="row" spacing={2} alignItems="center" sx={{ width: { xs: '100%', sm: '90%', md: '1000px' }, mb: 4 }}>
         <IconButton onClick={toggleDrawer} size="large" edge="start">
           <MenuIcon />
@@ -355,7 +422,6 @@ export default function Digitiser() {
 
       <Stack spacing={5} sx={{ width: { xs: '100%', sm: '90%', md: '1000px' } }}>
 
-        {/* Multi-select Alert */}
         {selectedFileIds.size > 0 && (
           <Alert
             severity="info"
@@ -365,9 +431,8 @@ export default function Digitiser() {
                 size="small"
                 variant="outlined"
                 onClick={() => {
-                  const selected = uploadedFiles
-                    .filter(f => selectedFileIds.has(f.file_id))
-                    .filter(f => f.status === 'completed');
+                  const selected = allFiles
+                    .filter(f => selectedFileIds.has(f.file_id) && f.status === 'completed')
                   if (selected.length > 0) {
                     openChatForFiles(
                       selected.map(f => f.file_id),
@@ -385,12 +450,11 @@ export default function Digitiser() {
           </Alert>
         )}
 
-        {/* Uploaded Files Table */}
         <Box>
           <Typography variant="h6" gutterBottom>
-            Your Uploaded Documents
+            Your Documents ({allFiles.length})
           </Typography>
-          <TableContainer component={Paper} elevation={2} sx={{ maxHeight: 400, overflow: 'auto', borderRadius: 2 }}>
+          <TableContainer component={Paper} elevation={2} sx={{ maxHeight: 500, overflow: 'auto', borderRadius: 2 }}>
             <Table stickyHeader>
               <TableHead>
                 <TableRow>
@@ -402,56 +466,59 @@ export default function Digitiser() {
                 </TableRow>
               </TableHead>
               <TableBody>
-                {filesLoading ? (
-                  <TableRow>
-                    <TableCell colSpan={5} align="center" sx={{ py: 4 }}>
-                      <CircularProgress />
+                {allFiles.map((doc) => (
+                  <TableRow key={doc.file_id} hover selected={selectedFileIds.has(doc.file_id)}>
+                    <TableCell padding="checkbox">
+                      <Checkbox
+                        checked={selectedFileIds.has(doc.file_id)}
+                        onChange={(e) => {
+                          const newSet = new Set(selectedFileIds);
+                          if (e.target.checked) newSet.add(doc.file_id);
+                          else newSet.delete(doc.file_id);
+                          setSelectedFileIds(newSet);
+                        }}
+                        disabled={doc.status !== 'completed'}
+                      />
+                    </TableCell>
+                    <TableCell>
+                      <Tooltip title={doc.filename}>
+                        <Typography noWrap sx={{ maxWidth: 300 }}>
+                          {doc.filename}
+                        </Typography>
+                      </Tooltip>
+                    </TableCell>
+                    <TableCell>{formatDate(doc.created_at)}</TableCell>
+                    <TableCell>
+                      <Stack spacing={1}>
+                        <Chip
+                          label={getStatusText(doc.status)}
+                          color={getStatusColor(doc.status)}
+                          size="small"
+                        />
+                        {doc.source === 'local' && doc.progress < 100 && (
+                          <LinearProgress variant="determinate" value={doc.progress} />
+                        )}
+                        {doc.error && <Typography variant="caption" color="error">{doc.error}</Typography>}
+                      </Stack>
+                    </TableCell>
+                    <TableCell align="center">
+                      <Button
+                        variant="outlined"
+                        size="small"
+                        onClick={() => openChatForFiles([doc.file_id], [doc.filename])}
+                        disabled={doc.status !== 'completed'}
+                      >
+                        Chat
+                      </Button>
                     </TableCell>
                   </TableRow>
-                ) : uploadedFiles.length === 0 ? (
+                ))}
+                {allFiles.length === 0 && !isUploading && (
                   <TableRow>
                     <TableCell colSpan={5} align="center" sx={{ py: 8, color: 'text.secondary' }}>
-                      No documents uploaded yet.
+                      No documents uploaded yet. Click below to add some!
                     </TableCell>
                   </TableRow>
-                ) : (
-                  uploadedFiles.map(doc => (
-                    <TableRow key={doc.file_id} hover selected={selectedFileIds.has(doc.file_id)}>
-                      <TableCell padding="checkbox">
-                        <Checkbox
-                          checked={selectedFileIds.has(doc.file_id)}
-                          onChange={(e) => {
-                            const newSet = new Set(selectedFileIds);
-                            if (e.target.checked) newSet.add(doc.file_id);
-                            else newSet.delete(doc.file_id);
-                            setSelectedFileIds(newSet);
-                          }}
-                          disabled={doc.status !== 'completed'}
-                        />
-                      </TableCell>
-                      <TableCell>
-                        <Tooltip title={doc.filename}>
-                          <Typography noWrap sx={{ maxWidth: 300 }}>
-                            {doc.filename}
-                          </Typography>
-                        </Tooltip>
-                      </TableCell>
-                      <TableCell>{formatDate(doc.created_at)}</TableCell>
-                      <TableCell>
-                        <Chip label={getStatusText(doc.status)} color={getStatusColor(doc.status)} size="small" />
-                      </TableCell>
-                      <TableCell align="center">
-                        <Button
-                          variant="outlined"
-                          size="small"
-                          onClick={() => openChatForFiles([doc.file_id], [doc.filename])}
-                          disabled={doc.status !== 'completed'}
-                        >
-                          Chat
-                        </Button>
-                      </TableCell>
-                    </TableRow>
-                  ))
                 )}
               </TableBody>
             </Table>
@@ -460,51 +527,42 @@ export default function Digitiser() {
 
         <Divider />
 
-        {/* Upload Section */}
-        <Typography variant="h6" gutterBottom>Upload New Document</Typography>
+        <Typography variant="h6" gutterBottom>
+          Upload Documents (Multiple PDFs Supported)
+        </Typography>
 
         <Stack direction={{ xs: 'column', sm: 'row' }} spacing={2} sx={{ alignItems: 'center' }}>
-          <input type="file" accept="application/pdf" onChange={handleFileChange} style={{ display: 'none' }} id="pdf-upload" disabled={!!fileId} />
-          <label htmlFor="pdf-upload">
-            <Button variant="outlined" component="span" disabled={!!fileId}>
-              {file ? 'Change PDF' : 'Upload PDF'}
+          <input
+            type="file"
+            accept="application/pdf"
+            multiple
+            onChange={handleFileChange}
+            style={{ display: 'none' }}
+            id="multi-pdf-upload"
+            disabled={isUploading}
+          />
+          <label htmlFor="multi-pdf-upload">
+            <Button
+              variant="contained"
+              component="span"
+              startIcon={<UploadFileIcon />}
+              disabled={isUploading}
+            >
+              {isUploading ? 'Uploading...' : 'Select PDFs'}
             </Button>
           </label>
 
-          <Button
-            variant="contained"
-            onClick={handleStartExtraction}
-            disabled={!file || !!fileId || loading}
-            startIcon={uploadLoading ? <CircularProgress size={20} color="inherit" /> : null}
-          >
-            {uploadLoading ? 'Uploading...' : fileId ? 'Processing...' : 'Start Extraction'}
-          </Button>
-
-          {fileId && <Button variant="text" onClick={reset}>Reset</Button>}
+          {localUploads.length > 0 && (
+            <Typography variant="body2" color="text.secondary">
+              {localUploads.filter(u => u.status === 'uploading').length} file(s) uploading...
+            </Typography>
+          )}
         </Stack>
 
-        {file && <Typography sx={{ color: 'text.secondary' }}>Selected: <strong>{file.name}</strong></Typography>}
-
-        {fileId && (
-          <Chip
-            label={getStatusText(status || '')}
-            color={getStatusColor(status || '')}
-            icon={loading ? <CircularProgress size={16} color="inherit" /> : undefined}
-          />
-        )}
-
-        {error && <Alert severity="error" onClose={clearError} sx={{ width: '100%' }}>{error}</Alert>}
-
-        {status === 'completed' && fileId && (
-          <>
-            <Alert severity="success" sx={{ mt: 2 }}>
-              Extraction complete! Select documents above to start chatting.
-            </Alert>
-            <Stack direction="row" spacing={2} sx={{ mt: 2, justifyContent: 'flex-end' }}>
-              <Button variant="outlined" onClick={handleOpenPreview}>Preview PDF</Button>
-              <Button variant="contained" onClick={handleDownloadPdf}>Download PDF</Button>
-            </Stack>
-          </>
+        {localUploads.length > 0 && (
+          <Alert severity="info" sx={{ mt: 2 }}>
+            {localUploads.length} file(s) added. They will appear in the table above as they upload and process.
+          </Alert>
         )}
       </Stack>
 
@@ -518,7 +576,7 @@ export default function Digitiser() {
           <List>
             {conversations.length === 0 ? (
               <Typography color="text.secondary" sx={{ p: 4, textAlign: 'center' }}>
-                No conversations yet.<br />Start chatting with your documents!
+                No conversations yet.<br />Upload documents and start chatting!
               </Typography>
             ) : (
               conversations.map(conv => (
@@ -563,22 +621,7 @@ export default function Digitiser() {
         </Box>
       </Drawer>
 
-      {/* Preview Dialog */}
-      <Dialog open={previewOpen} onClose={handleClosePreview} maxWidth="lg" fullWidth>
-        <DialogTitle>Regenerated PDF Preview</DialogTitle>
-        <DialogContent>
-          {previewUrl ? (
-            <iframe src={previewUrl} style={{ width: '100%', height: '80vh', border: 'none' }} />
-          ) : (
-            <CircularProgress sx={{ display: 'block', mx: 'auto', my: 4 }} />
-          )}
-        </DialogContent>
-        <DialogActions>
-          <Button onClick={handleClosePreview}>Close</Button>
-        </DialogActions>
-      </Dialog>
-
-      {/* Chat Dialog with Source Citations */}
+      {/* Chat Dialog */}
       <Dialog open={chatOpen} onClose={handleCloseChat} maxWidth="md" fullWidth>
         <DialogTitle>
           <Stack direction="row" justifyContent="space-between" alignItems="center">
@@ -587,30 +630,20 @@ export default function Digitiser() {
                 ? activeChatFilenames[0]
                 : `${activeChatFilenames.length} documents`}
             </Typography>
-            <Button
-              startIcon={<SearchIcon />}
-              onClick={toggleSearch}
-              variant={showSearchResults ? "contained" : "outlined"}
-              size="small"
-            >
+            <Button startIcon={<SearchIcon />} onClick={toggleSearch} variant={showSearchResults ? "contained" : "outlined"} size="small">
               {showSearchResults ? 'Close Search' : 'Search'}
             </Button>
           </Stack>
         </DialogTitle>
 
         <DialogContent dividers sx={{ display: 'flex', flexDirection: 'column', height: '70vh' }}>
-          {/* Optional intra-document search (only for single file) */}
-          {showSearchResults && activeChatFileIds.length === 1 && extractedText && (
+          {showSearchResults && activeChatFileIds.length === 1 && (
             <Paper variant="outlined" sx={{ p: 2, mb: 2, maxHeight: '40vh', overflow: 'auto', bgcolor: 'grey.50' }}>
               <Typography variant="subtitle1" gutterBottom>Search in document</Typography>
               <TextField
-                fullWidth
-                variant="outlined"
-                placeholder="Search..."
-                value={searchQuery}
-                onChange={e => setSearchQuery(e.target.value)}
-                sx={{ mb: 2 }}
-                autoFocus
+                fullWidth variant="outlined" placeholder="Search..."
+                value={searchQuery} onChange={e => setSearchQuery(e.target.value)}
+                sx={{ mb: 2 }} autoFocus
               />
               {searchQuery.trim() && (
                 <Typography component="div" sx={{ whiteSpace: 'pre-wrap', fontSize: '0.95rem', lineHeight: 1.6 }}>
@@ -618,42 +651,32 @@ export default function Digitiser() {
                     highlightClassName="search-highlight"
                     searchWords={[searchQuery.trim()]}
                     autoEscape
-                    textToHighlight={extractedText}
+                    textToHighlight="Placeholder – full text search coming soon"
                   />
                 </Typography>
               )}
             </Paper>
           )}
 
-          {/* Chat Messages */}
           <Paper variant="outlined" sx={{ flexGrow: 1, overflow: 'auto', p: 2, mb: 2 }}>
             <List>
               {chatHistory.filter(m => m.role !== 'system').map((msg, i) => (
                 <ListItem key={i} sx={{ justifyContent: msg.role === 'user' ? 'flex-end' : 'flex-start' }}>
-                  <Paper
-                    elevation={1}
-                    sx={{
-                      p: 2,
-                      maxWidth: '85%',
-                      bgcolor: msg.role === 'user' ? 'primary.light' : 'grey.100',
-                      color: msg.role === 'user' ? 'white' : 'text.primary'
-                    }}
-                  >
+                  <Paper elevation={1} sx={{
+                    p: 2,
+                    maxWidth: '85%',
+                    bgcolor: msg.role === 'user' ? 'primary.light' : 'grey.100',
+                    color: msg.role === 'user' ? 'white' : 'text.primary'
+                  }}>
                     <Typography variant="subtitle2" fontWeight="bold" gutterBottom>
                       {msg.role === 'user' ? 'You' : 'Assistant'}
                     </Typography>
-
                     <Typography whiteSpace="pre-wrap" sx={{ mb: msg.sources && msg.sources.length > 0 ? 2 : 0 }}>
                       {msg.content || <i>Thinking...</i>}
                     </Typography>
-
-                    {/* Source Citations */}
                     {msg.sources && msg.sources.length > 0 && (
                       <Accordion elevation={0} sx={{ bgcolor: 'transparent', mt: 1 }}>
-                        <AccordionSummary
-                          expandIcon={<ExpandMoreIcon />}
-                          sx={{ fontSize: '0.875rem', minHeight: '36px', '& .MuiAccordionSummary-content': { my: 0.5 } }}
-                        >
+                        <AccordionSummary expandIcon={<ExpandMoreIcon />} sx={{ fontSize: '0.875rem' }}>
                           <Typography variant="caption" fontWeight="medium">
                             Sources ({msg.sources.length})
                           </Typography>
@@ -693,30 +716,15 @@ export default function Digitiser() {
 
           {chatError && <Alert severity="error" onClose={() => setChatError(null)} sx={{ mb: 2 }}>{chatError}</Alert>}
 
-          {/* Message Input */}
           <Stack direction="row" spacing={1} alignItems="flex-end">
             <TextField
-              fullWidth
-              multiline
-              maxRows={4}
-              variant="outlined"
+              fullWidth multiline maxRows={4} variant="outlined"
               placeholder="Ask a question about the document(s)..."
-              value={userMessage}
-              onChange={e => setUserMessage(e.target.value)}
-              onKeyDown={e => {
-                if (e.key === 'Enter' && !e.shiftKey) {
-                  e.preventDefault();
-                  handleSendMessage();
-                }
-              }}
+              value={userMessage} onChange={e => setUserMessage(e.target.value)}
+              onKeyDown={e => e.key === 'Enter' && !e.shiftKey && (e.preventDefault(), handleSendMessage())}
               disabled={chatLoading}
             />
-            <Button
-              variant="contained"
-              onClick={handleSendMessage}
-              disabled={!userMessage.trim() || chatLoading}
-              sx={{ height: 56 }}
-            >
+            <Button variant="contained" onClick={handleSendMessage} disabled={!userMessage.trim() || chatLoading} sx={{ height: 56 }}>
               <SendIcon />
             </Button>
           </Stack>

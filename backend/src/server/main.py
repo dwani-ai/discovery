@@ -549,6 +549,43 @@ Answer clearly and cite sources naturally where relevant."""
         logger.error(f"Chat failed: {e}")
         raise HTTPException(status_code=500, detail="Failed to generate response")
 
+
+class MergePdfRequest(BaseModel):
+    file_ids: List[str]
+
+@app.post("/files/merge-pdf", tags=["Files"])
+def merge_pdf(request: MergePdfRequest, db: Session = Depends(get_db)):
+    if len(request.file_ids) < 1:
+        raise HTTPException(status_code=400, detail="At least one file required")
+
+    records = db.query(FileRecord).filter(FileRecord.id.in_(request.file_ids)).all()
+    if len(records) != len(request.file_ids):
+        raise HTTPException(status_code=404, detail="One or more files not found")
+
+    for r in records:
+        if r.status != FileStatus.COMPLETED or not r.extracted_text:
+            raise HTTPException(status_code=400, detail=f"File {r.filename} not ready")
+
+    pdf = FPDF()
+    pdf.set_auto_page_break(auto=True, margin=15)
+    pdf.set_margins(15, 15, 15)
+
+    font_path = "fonts/DejaVuSans.ttf"  # your existing font
+    pdf.add_font(fname=font_path, uni=True)
+    pdf.set_font("DejaVuSans", size=11)
+
+    for record in records:
+        pdf.add_page()
+        pdf.multi_cell(0, 7, clean_text(record.extracted_text))
+
+    pdf_bytes = pdf.output()
+
+    return StreamingResponse(
+        BytesIO(pdf_bytes),
+        media_type="application/pdf",
+        headers={"Content-Disposition": f'attachment; filename="merged_clean_documents.pdf"'}
+    )
+
 # -------------------------- Run Server --------------------------
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Run the dwani.ai FastAPI server")
