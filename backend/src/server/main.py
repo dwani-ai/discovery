@@ -445,7 +445,6 @@ def list_files(db: Session = Depends(get_db), limit: int = 20):
         for f in files
     ]
 
-
 @app.post("/chat-with-document", tags=["Files"])
 async def chat_with_document(request: MultiChatRequest, db: Session = Depends(get_db)):
     if not request.file_ids:
@@ -472,37 +471,42 @@ async def chat_with_document(request: MultiChatRequest, db: Session = Depends(ge
         include=["documents", "metadatas", "distances"]
     )
 
-    relevant_chunks = results['documents'][0] if results['documents'] else []
-    metadatas = results['metadatas'][0] if results['metadatas'] else []
-    distances = results['distances'][0] if results['distances'] else []
+    # Safely extract results
+    documents = results.get('documents', [[]])[0] or []
+    metadatas = results.get('metadatas', [[]])[0] or []
+    distances = results.get('distances', [[]])[0] or []
 
-    # FIXED: More permissive relevance threshold
     context_parts = []
     sources = []
-    min_relevance = 0.25  # Lowered from implicit ~0.4 (distance < 0.6) to allow more context
+    min_relevance = 0.25  # Permissive threshold
 
-    for i, (chunk, meta) in enumerate(zip(relevant_chunks, metadatas)):
-        distance = distances[i]
+    for chunk, meta, distance in zip(documents, metadatas, distances):
+        if not meta or 'file_id' not in meta:
+            continue
         relevance = 1 - distance
         if relevance < min_relevance:
             continue
+
+        # Safely get filename
+        file_id = meta['file_id']
+        filename = next((r.filename for r in records if r.id == file_id), "Unknown Document")
+
         context_parts.append(chunk)
-        filename = next(r.filename for r in records if r.id == meta['file_id'])
         sources.append({
             "filename": filename,
             "excerpt": chunk.strip(),
             "relevance_score": round(relevance, 3)
         })
 
-    context = "\n\n".join(context_parts) if context_parts else "No sufficiently relevant content found."
+    context = "\n\n".join(context_parts) if context_parts else "No relevant content was found in the document."
 
-    system_prompt = f"""You are an expert assistant. Answer based ONLY on the provided document excerpts.
-If the question cannot be answered from the context, say "I don't know".
+    system_prompt = f"""You are an expert assistant. Answer the question using only the provided document context.
+If the answer cannot be found, say "I don't know".
 
 Context:
 {context}
 
-Answer clearly and cite sources naturally where relevant."""
+Answer clearly and concisely."""
 
     full_messages = [
         {"role": "system", "content": system_prompt},
@@ -525,7 +529,7 @@ Answer clearly and cite sources naturally where relevant."""
 
         return {
             "answer": answer,
-            "sources": sources
+            "sources": sources[:3]  # Limit sources shown
         }
     except Exception as e:
         logger.error(f"Chat failed: {e}")
