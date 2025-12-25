@@ -1,5 +1,4 @@
 import argparse
-import asyncio
 import base64
 import enum
 import hashlib
@@ -13,9 +12,9 @@ from typing import List, Optional
 
 import chromadb
 from chromadb.utils import embedding_functions
-from fastapi import FastAPI, UploadFile, File, HTTPException, BackgroundTasks, Depends, Body
+from fastapi import FastAPI, UploadFile, HTTPException, BackgroundTasks, Depends, Body
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import StreamingResponse
+from fastapi.responses import StreamingResponse, FileResponse
 from fpdf import FPDF
 from openai import AsyncOpenAI
 from pdf2image import convert_from_bytes
@@ -33,7 +32,9 @@ import uvicorn
 logging.config.dictConfig({
     "version": 1,
     "disable_existing_loggers": False,
-    "formatters": {"simple": {"format": "%(asctime)s - %(name)s - %(levelname)s - %(message)s"}},
+    "formatters": {
+        "simple": {"format": "%(asctime)s - %(name)s - %(levelname)s - %(message)s"}
+    },
     "handlers": {
         "console": {"class": "logging.StreamHandler", "formatter": "simple"},
         "file": {
@@ -49,7 +50,6 @@ logging.config.dictConfig({
 
 logger = logging.getLogger("dwani_server")
 
-# Environment variables
 DWANI_API_BASE_URL = os.getenv("DWANI_API_BASE_URL")
 if not DWANI_API_BASE_URL:
     raise RuntimeError("DWANI_API_BASE_URL environment variable is required.")
@@ -169,7 +169,7 @@ def chunk_text(text: str, chunk_size: int = 800, overlap: int = 100) -> List[str
     chunks = []
     i = 0
     while i < len(words):
-        chunk = " ".join(words[i : i + chunk_size])
+        chunk = " ".join(words[i:i + chunk_size])
         chunks.append(chunk)
         i += chunk_size - overlap
         if i >= len(words) and len(chunks) > 1:
@@ -245,7 +245,7 @@ async def store_embeddings(file_id: str, text: str):
     logger.info(f"Stored {len(chunks)} embeddings for file {file_id}")
 
 
-def generate_pdf_from_text(text: str, original_filename: Optional[str] = None) -> BytesIO:
+def generate_pdf_from_text(text: str) -> BytesIO:
     pdf = FPDF(format="A4")
     pdf.set_auto_page_break(auto=True, margin=15)
     pdf.set_margins(15, 15, 15)
@@ -257,8 +257,6 @@ def generate_pdf_from_text(text: str, original_filename: Optional[str] = None) -
     pdf.set_font("DejaVuSans", size=11)
 
     cleaned = clean_text(text)
-
-    # Split into pages if needed – FPDF handles long text well with multi_cell
     pdf.add_page()
     pdf.multi_cell(0, 7, cleaned)
 
@@ -284,9 +282,11 @@ async def background_extraction_task(file_id: str, pdf_bytes: bytes, filename: s
 
         file_record.extracted_text = extracted
         file_record.status = FileStatus.COMPLETED
-        await store_embeddings(file_id, extracted)
+        db.commit()
 
+        await store_embeddings(file_id, extracted)
         logger.info(f"Extraction completed for {filename} ({file_id})")
+
     except Exception as e:
         file_record.status = FileStatus.FAILED
         file_record.error_message = str(e)
@@ -299,7 +299,7 @@ async def background_extraction_task(file_id: str, pdf_bytes: bytes, filename: s
 # ========================= ROUTES =========================
 
 @app.post("/app-extract-text", response_model=ExtractionResponse, tags=["Legacy"])
-async def legacy_extract_text(file: UploadFile = File(...)):
+async def legacy_extract_text(file: UploadFile):
     if not file.filename.lower().endswith(".pdf"):
         raise HTTPException(status_code=400, detail="Only PDF files allowed")
 
@@ -311,7 +311,11 @@ async def legacy_extract_text(file: UploadFile = File(...)):
 
 
 @app.post("/files/upload", response_model=FileUploadResponse, tags=["Files"])
-async def upload_file(file: UploadFile = File(...), background_tasks: BackgroundTasks, db: Session = Depends(get_db)):
+async def upload_file(
+    file: UploadFile,
+    background_tasks: BackgroundTasks,
+    db: Session = Depends(get_db)
+):
     if not file.filename.lower().endswith(".pdf") or file.content_type != "application/pdf":
         raise HTTPException(status_code=400, detail="Only PDF files supported")
 
@@ -324,7 +328,11 @@ async def upload_file(file: UploadFile = File(...), background_tasks: Background
 
     background_tasks.add_task(background_extraction_task, file_id, content, file.filename, db)
 
-    return FileUploadResponse(file_id=file_id, filename=file.filename, message="Upload successful. Processing in background.")
+    return FileUploadResponse(
+        file_id=file_id,
+        filename=file.filename,
+        message="Upload successful. Processing in background."
+    )
 
 
 @app.get("/files/{file_id}", response_model=FileRetrieveResponse, tags=["Files"])
@@ -343,8 +351,8 @@ def download_clean_pdf(file_id: str, db: Session = Depends(get_db)):
     if record.status != FileStatus.COMPLETED or not record.extracted_text:
         raise HTTPException(status_code=400, detail="Document not processed yet")
 
-    pdf_io = generate_pdf_from_text(record.extracted_text, record.filename)
-    clean_name = f"clean_{record.filename.rsplit('.', 1)[0]}.pdf"
+    pdf_io = generate_pdf_from_text(record.extracted_text)
+    clean_name = f"clean_{record.filename}"
 
     return StreamingResponse(
         pdf_io,
@@ -380,7 +388,7 @@ async def merge_pdfs(request: MergePdfRequest = Body(...), db: Session = Depends
     output.seek(0)
 
     filename = (
-        f"clean_{records[0].filename.rsplit('.', 1)[0]}.pdf"
+        f"clean_{records[0].filename}"
         if len(records) == 1
         else f"merged_clean_{len(records)}_docs.pdf"
     )
@@ -395,7 +403,15 @@ async def merge_pdfs(request: MergePdfRequest = Body(...), db: Session = Depends
 @app.get("/files/", tags=["Files"])
 def list_files(limit: int = 20, db: Session = Depends(get_db)):
     files = db.query(FileRecord).order_by(FileRecord.created_at.desc()).limit(limit).all()
-    return [{"file_id": f.id, "filename": f.filename, "status": f.status, "created_at": f.created_at.isoformat()} for f in files]
+    return [
+        {
+            "file_id": f.id,
+            "filename": f.filename,
+            "status": f.status,
+            "created_at": f.created_at.isoformat(),
+        }
+        for f in files
+    ]
 
 
 @app.post("/chat-with-document", tags=["Files"])
@@ -460,7 +476,10 @@ Context:
 
     sources.sort(key=lambda x: x["relevance_score"], reverse=True)
 
-    return {"answer": response.choices[0].message.content.strip(), "sources": sources[:5]}
+    return {
+        "answer": response.choices[0].message.content.strip(),
+        "sources": sources[:5]
+    }
 
 
 @app.delete("/files/{file_id}", tags=["Files"])
