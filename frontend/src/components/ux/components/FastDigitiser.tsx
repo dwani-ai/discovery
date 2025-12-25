@@ -43,6 +43,7 @@ import UploadFileIcon from '@mui/icons-material/UploadFile';
 import PictureAsPdfIcon from '@mui/icons-material/PictureAsPdf';
 import DeleteIcon from '@mui/icons-material/Delete';
 import LanguageIcon from '@mui/icons-material/Language';
+import DownloadIcon from '@mui/icons-material/Download';
 
 import Highlight from 'react-highlight-words';
 
@@ -317,6 +318,33 @@ export default function Digitiser() {
       URL.revokeObjectURL(url);
     } catch (err) {
       alert(err instanceof Error ? err.message : 'Failed to generate PDF');
+    }
+  };
+
+  // Download single regenerated PDF
+  const handleDownloadPdf = async (fileId: string, originalFilename: string) => {
+    try {
+      const response = await fetch(`${API_BASE}/files/${fileId}/pdf`, {
+        headers: { 'X-API-KEY': API_KEY || '' },
+      });
+
+      if (!response.ok) {
+        const err = await response.json().catch(() => ({}));
+        throw new Error(err.detail || 'Failed to download PDF');
+      }
+
+      const blob = await response.blob();
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      const cleanName = originalFilename.replace(/\.pdf$/i, '');
+      a.download = `clean_${cleanName}.pdf`;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      URL.revokeObjectURL(url);
+    } catch (err) {
+      alert('Failed to download cleaned PDF');
     }
   };
 
@@ -696,6 +724,16 @@ export default function Digitiser() {
                           >
                             Chat
                           </Button>
+                          {doc.source === 'server' && doc.status === 'completed' && (
+                            <Button
+                              variant="outlined"
+                              size="small"
+                              startIcon={<DownloadIcon />}
+                              onClick={() => handleDownloadPdf(doc.file_id, doc.filename)}
+                            >
+                              Download
+                            </Button>
+                          )}
                           {doc.source === 'server' && doc.status === 'completed' && (
                             <IconButton
                               size="small"
