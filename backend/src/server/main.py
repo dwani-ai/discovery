@@ -527,6 +527,11 @@ Answer clearly and cite sources naturally where relevant."""
         raise HTTPException(status_code=500, detail="Failed to generate response")
 
 
+from fastapi.responses import StreamingResponse
+from io import BytesIO
+import os
+import unicodedata
+
 @app.post("/files/merge-pdf", tags=["Files"])
 async def merge_pdf(request: MergePdfRequest = Body(...), db: Session = Depends(get_db)):
     if len(request.file_ids) == 0:
@@ -540,29 +545,34 @@ async def merge_pdf(request: MergePdfRequest = Body(...), db: Session = Depends(
         if record.status != FileStatus.COMPLETED or not record.extracted_text:
             raise HTTPException(
                 status_code=400,
-                detail=f"Document '{record.filename}' is not ready"
+                detail=f"Document '{record.filename}' is not ready (status: {record.status})"
             )
 
+    # Generate PDF
     pdf = FPDF(format='A4')
     pdf.set_auto_page_break(auto=True, margin=15)
     pdf.set_margins(15, 15, 15)
 
     font_path = os.path.join(os.path.dirname(__file__), "fonts", "DejaVuSans.ttf")
     if not os.path.exists(font_path):
-        raise HTTPException(status_code=500, detail="Font file not found")
+        raise HTTPException(status_code=500, detail="Font file DejaVuSans.ttf not found on server")
 
     pdf.add_font(fname=font_path, uni=True)
     pdf.set_font("DejaVuSans", size=11)
 
     for record in records:
         pdf.add_page()
-        cleaned = clean_text(record.extracted_text)
-        pdf.multi_cell(0, 7, cleaned)
+        cleaned_text = ''.join(
+            ch for ch in record.extracted_text 
+            if unicodedata.category(ch)[0] != 'C' or ch in '\n\r\t'
+        )
+        pdf.multi_cell(0, 7, cleaned_text)
 
     pdf_bytes = pdf.output()
 
+    # Smart filename
     if len(records) == 1:
-        base_name = records[0].filename.replace(".pdf", "", -1)
+        base_name = records[0].filename.rsplit('.', 1)[0]
         filename = f"clean_{base_name}.pdf"
     else:
         filename = f"merged_clean_{len(records)}_documents.pdf"
@@ -570,7 +580,9 @@ async def merge_pdf(request: MergePdfRequest = Body(...), db: Session = Depends(
     return StreamingResponse(
         BytesIO(pdf_bytes),
         media_type="application/pdf",
-        headers={"Content-Disposition": f'attachment; filename="{filename}"'}
+        headers={
+            "Content-Disposition": f'attachment; filename="{filename}"'
+        }
     )
 
 

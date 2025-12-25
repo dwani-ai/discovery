@@ -112,7 +112,7 @@ export default function Digitiser() {
   const API_BASE = import.meta.env.VITE_DWANI_API_BASE_URL || 'https://discovery-server.dwani.ai';
   const API_KEY = import.meta.env.VITE_DWANI_API_KEY;
 
-  // Load conversations
+  // Load conversations from localStorage
   useEffect(() => {
     const saved = localStorage.getItem(STORAGE_KEY);
     if (saved) {
@@ -125,14 +125,14 @@ export default function Digitiser() {
     }
   }, []);
 
-  // Save conversations
+  // Save conversations to localStorage
   useEffect(() => {
     if (conversations.length > 0) {
       localStorage.setItem(STORAGE_KEY, JSON.stringify(conversations));
     }
   }, [conversations]);
 
-  // Fetch files
+  // Fetch uploaded files from server
   const fetchUploadedFiles = async () => {
     setFilesLoading(true);
     try {
@@ -259,6 +259,7 @@ export default function Digitiser() {
           : u
       ));
     } finally {
+      // Remove from localUploads after a short delay (deduplication will hide it anyway if server has it)
       setTimeout(() => {
         setLocalUploads(prev => prev.filter(u => u !== current));
         uploadNextFile(remaining);
@@ -342,7 +343,6 @@ export default function Digitiser() {
         alert(`${failed.length} file(s) could not be deleted.`);
       }
 
-      // Update UI
       setUploadedFiles(prev => prev.filter(f => !filesToDelete.includes(f.file_id)));
       setSelectedFileIds(prev => {
         const newSet = new Set(prev);
@@ -350,7 +350,6 @@ export default function Digitiser() {
         return newSet;
       });
 
-      // Remove affected conversations
       setConversations(prev => prev.filter(conv =>
         !conv.fileIds.some(id => filesToDelete.includes(id))
       ));
@@ -491,19 +490,30 @@ export default function Digitiser() {
     }
   };
 
-  // Combined files list
-  const allFiles = [
-    ...uploadedFiles.map(f => ({ ...f, source: 'server' as const })),
-    ...localUploads.map(u => ({
-      file_id: u.file_id || `local-${Math.random()}`,
+  // === FIXED: Combined files list with deduplication to prevent duplicates ===
+  const serverFileIds = new Set(uploadedFiles.map(f => f.file_id));
+
+  const serverDocs = uploadedFiles.map(f => ({
+    ...f,
+    source: 'server' as const,
+    progress: 100,
+    error: undefined,
+  }));
+
+  const localDocs = localUploads
+    .filter(u => !u.file_id || !serverFileIds.has(u.file_id)) // Hide local entry if server already knows it
+    .map((u, index) => ({
+      file_id: u.file_id || `local-${u.file.name}-${u.file.size}-${u.file.lastModified}-${index}`,
       filename: u.file.name,
       status: u.status,
       created_at: new Date().toISOString(),
       source: 'local' as const,
       progress: u.progress,
-      error: u.error
-    }))
-  ].sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime());
+      error: u.error,
+    }));
+
+  const allFiles = [...serverDocs, ...localDocs]
+    .sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime());
 
   const selectedCompletedCount = allFiles.filter(f => 
     selectedFileIds.has(f.file_id) && f.status === 'completed'
