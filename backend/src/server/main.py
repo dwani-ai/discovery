@@ -445,6 +445,7 @@ def list_files(db: Session = Depends(get_db), limit: int = 20):
         for f in files
     ]
 
+
 @app.post("/chat-with-document", tags=["Files"])
 async def chat_with_document(request: MultiChatRequest, db: Session = Depends(get_db)):
     if not request.file_ids:
@@ -466,7 +467,7 @@ async def chat_with_document(request: MultiChatRequest, db: Session = Depends(ge
     query_embedding = embedding_function([question])
     results = collection.query(
         query_embeddings=query_embedding,
-        n_results=6,
+        n_results=12,  # Increased from 6 to 12 for better recall
         where={"file_id": {"$in": request.file_ids}},
         include=["documents", "metadatas", "distances"]
     )
@@ -478,7 +479,9 @@ async def chat_with_document(request: MultiChatRequest, db: Session = Depends(ge
 
     context_parts = []
     sources = []
-    min_relevance = 0.25  # Permissive threshold
+
+    # Lowered threshold — now allows all top chunks (relevance >= 0.0)
+    min_relevance = 0.0
 
     for chunk, meta, distance in zip(documents, metadatas, distances):
         if not meta or 'file_id' not in meta:
@@ -487,7 +490,6 @@ async def chat_with_document(request: MultiChatRequest, db: Session = Depends(ge
         if relevance < min_relevance:
             continue
 
-        # Safely get filename
         file_id = meta['file_id']
         filename = next((r.filename for r in records if r.id == file_id), "Unknown Document")
 
@@ -529,7 +531,7 @@ Answer clearly and concisely."""
 
         return {
             "answer": answer,
-            "sources": sources[:3]  # Limit sources shown
+            "sources": sources[:5]  # Show top 5 sources
         }
     except Exception as e:
         logger.error(f"Chat failed: {e}")
