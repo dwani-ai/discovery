@@ -72,6 +72,7 @@ interface LocalUpload {
 
 interface Source {
   filename: string;
+  page: string; // e.g., "Page 12" or "Pages 11–12"
   excerpt: string;
   relevance_score: number;
 }
@@ -148,7 +149,6 @@ const useDocumentManager = () => {
 
       const data = await res.json();
 
-      // Update local upload with file_id and mark as pending
       setLocalUploads(prev =>
         prev.map(u =>
           u.file === file ? { ...u, file_id: data.file_id, status: 'pending', progress: 100 } : u
@@ -163,7 +163,6 @@ const useDocumentManager = () => {
         )
       );
     } finally {
-      // Immediately remove from localUploads — server will show it via polling
       setLocalUploads(prev => prev.filter(u => u.file !== file));
       uploadNext();
     }
@@ -429,7 +428,7 @@ export default function Digitiser() {
   const [userMessage, setUserMessage] = useState('');
   const [filesToDelete, setFilesToDelete] = useState<string[]>([]);
 
-  // === FIXED: Deduplicated file list to prevent duplicates ===
+  // Deduplicated file list (no duplicates during upload)
   const serverFileMap = new Map<string, UploadedFile>();
   uploadedFiles.forEach(f => serverFileMap.set(f.file_id, f));
 
@@ -589,7 +588,6 @@ export default function Digitiser() {
                     </TableCell>
                     <TableCell align="center">
                       <Stack direction="row" spacing={1} justifyContent="center">
-                        {/* Always visible Chat button */}
                         <Button
                           size="small"
                           variant="outlined"
@@ -601,7 +599,6 @@ export default function Digitiser() {
                           {file.status === 'completed' ? 'Chat' : 'Processing...'}
                         </Button>
 
-                        {/* Download & Delete only when completed */}
                         {file.status === 'completed' && (
                           <>
                             <Button
@@ -702,27 +699,67 @@ export default function Digitiser() {
                         {msg.role === 'user' ? 'You' : 'Assistant'}
                       </Typography>
                       <Typography whiteSpace="pre-wrap">{msg.content || 'Thinking...'}</Typography>
+
+                      {/* Page-Level Clickable Citations */}
                       {msg.sources && msg.sources.length > 0 && (
                         <Accordion sx={{ mt: 2 }}>
                           <AccordionSummary expandIcon={<ExpandMoreIcon />}>
-                            <Typography variant="caption">Sources ({msg.sources.length})</Typography>
+                            <Typography variant="caption" fontWeight="medium">
+                              Sources ({msg.sources.length})
+                            </Typography>
                           </AccordionSummary>
                           <AccordionDetails>
-                            <Stack spacing={1}>
-                              {msg.sources.map((s, idx) => (
-                                <Box key={idx}>
-                                  <Typography variant="caption" color="text.secondary">
-                                    <strong>{s.filename}</strong> (relevance: {s.relevance_score.toFixed(2)})
-                                  </Typography>
-                                  <Paper variant="outlined" sx={{ p: 1, mt: 0.5, bgcolor: 'grey.50' }}>
-                                    <Highlight
-                                      searchWords={userMessage.split(' ').filter(w => w.length > 3)}
-                                      textToHighlight={s.excerpt}
-                                      autoEscape
-                                    />
-                                  </Paper>
-                                </Box>
-                              ))}
+                            <Stack spacing={2}>
+                              {msg.sources.map((source, idx) => {
+                                // Find matching file to get file_id
+                                const fileRecord = allFiles.find(
+                                  f => f.filename === source.filename && f.status === 'completed'
+                                );
+
+                                // Extract first page number for #page= hash (e.g., "12" from "Page 12" or "Pages 11–12")
+                                const pageMatch = source.page.match(/\d+/);
+                                const firstPage = pageMatch ? parseInt(pageMatch[0]) : 1;
+
+                                const pdfUrl = fileRecord
+                                  ? `${API_BASE}/files/${fileRecord.file_id}/pdf#page=${firstPage}`
+                                  : null;
+
+                                return (
+                                  <Box key={idx}>
+                                    <Typography variant="caption" gutterBottom>
+                                      {pdfUrl ? (
+                                        <a
+                                          href={pdfUrl}
+                                          target="_blank"
+                                          rel="noopener noreferrer"
+                                          style={{
+                                            color: '#1976d2',
+                                            textDecoration: 'underline',
+                                            fontWeight: 'bold',
+                                          }}
+                                        >
+                                          {source.filename} — {source.page}
+                                        </a>
+                                      ) : (
+                                        <strong>
+                                          {source.filename} — {source.page || 'Unknown page'}
+                                        </strong>
+                                      )}{' '}
+                                      <span style={{ color: '#666' }}>
+                                        (relevance: {source.relevance_score.toFixed(2)})
+                                      </span>
+                                    </Typography>
+                                    <Paper variant="outlined" sx={{ p: 1.5, mt: 0.5, bgcolor: 'grey.50' }}>
+                                      <Highlight
+                                        highlightClassName="source-highlight"
+                                        searchWords={userMessage.split(' ').filter(w => w.length > 3)}
+                                        textToHighlight={source.excerpt}
+                                        autoEscape
+                                      />
+                                    </Paper>
+                                  </Box>
+                                );
+                              })}
                             </Stack>
                           </AccordionDetails>
                         </Accordion>
