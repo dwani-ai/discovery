@@ -469,7 +469,7 @@ async def chat_with_document(request: MultiChatRequest, db: Session = Depends(ge
     if not request.file_ids:
         raise HTTPException(status_code=400, detail="At least one file_id required")
 
-    # Validate all files exist and are completed
+    # Validate files
     records = db.query(FileRecord).filter(FileRecord.id.in_(request.file_ids)).all()
     if len(records) != len(request.file_ids):
         raise HTTPException(status_code=404, detail="One or more files not found")
@@ -478,33 +478,48 @@ async def chat_with_document(request: MultiChatRequest, db: Session = Depends(ge
         if record.status != FileStatus.COMPLETED:
             raise HTTPException(status_code=400, detail=f"Document {record.filename} is not ready")
 
-    # Get user's latest question
+    # Get question
     user_messages = [m for m in request.messages if m.role == "user"]
     if not user_messages:
-        raise HTTPException(status_code=400, detail="No user question provided")
+        raise HTTPException(status_code=400, detail="No user question")
     question = user_messages[-1].content
 
-    # Retrieve relevant chunks from ALL selected files
+    # Retrieve top chunks
     query_embedding = embedding_function([question])
     results = collection.query(
         query_embeddings=query_embedding,
-        n_results=8,  # Increase slightly since searching multiple docs
-        where={"file_id": {"$in": request.file_ids}}  # Chroma supports $in
+        n_results=6,  # More for better coverage
+        where={"file_id": {"$in": request.file_ids}},
+        include=["documents", "metadatas", "distances"]
     )
 
     relevant_chunks = results['documents'][0] if results['documents'] else []
-    context = "\n\n".join(relevant_chunks)
+    metadatas = results['metadatas'][0] if results['metadatas'] else []
+    distances = results['distances'][0] if results['distances'] else []
 
-    if not context.strip():
-        context = "No relevant information found in the selected documents."
+    # Build context
+    context_parts = []
+    sources = []
+    for i, (chunk, meta) in enumerate(zip(relevant_chunks, metadatas)):
+        if distances[i] > 0.6:  # Rough relevance threshold - adjust as needed
+            continue
+        context_parts.append(chunk)
+        filename = next(r.filename for r in records if r.id == meta['file_id'])
+        sources.append({
+            "filename": filename,
+            "excerpt": chunk.strip(),
+            "relevance_score": round(1 - distances[i], 3)  # Higher = more relevant
+        })
 
-    system_prompt = f"""You are an expert assistant answering based ONLY on the provided document excerpts from multiple files.
-Do not use external knowledge. If the answer isn't in the context, say "I don't know".
+    context = "\n\n".join(context_parts) if context_parts else "No highly relevant content found."
 
-Context from selected documents:
+    system_prompt = f"""You are an expert assistant. Answer based ONLY on the provided document excerpts.
+If the question cannot be answered from the context, say "I don't know".
+
+Context:
 {context}
 
-Answer accurately and cite the source filename if possible."""
+Answer clearly and cite sources naturally where relevant."""
 
     full_messages = [
         {"role": "system", "content": system_prompt},
@@ -523,23 +538,16 @@ Answer accurately and cite the source filename if possible."""
         )
         answer = response.choices[0].message.content.strip()
 
-        # Count how many unique files contributed
-        source_file_ids = set(meta['file_id'] for meta in results['metadatas'][0]) if results['metadatas'] else set()
-        filenames = [r.filename for r in records if r.id in source_file_ids]
-
-        sources_info = f" (from {len(source_file_ids)} document{'' if len(source_file_ids)==1 else 's'})"
-        if len(filenames) <= 3:
-            sources_info = f" (from: {', '.join(filenames)})"
+        # Sort sources by relevance
+        sources.sort(key=lambda x: x['relevance_score'], reverse=True)
 
         return {
-            "answer": answer + sources_info,
-            "sources": len(relevant_chunks)
+            "answer": answer,
+            "sources": sources  # New: return structured sources
         }
     except Exception as e:
-        logger.error(f"Multi-chat failed: {e}")
+        logger.error(f"Chat failed: {e}")
         raise HTTPException(status_code=500, detail="Failed to generate response")
-    
-
 
 # -------------------------- Run Server --------------------------
 if __name__ == "__main__":

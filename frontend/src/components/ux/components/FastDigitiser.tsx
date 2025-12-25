@@ -25,6 +25,10 @@ import TableHead from '@mui/material/TableHead';
 import TableRow from '@mui/material/TableRow';
 import Tooltip from '@mui/material/Tooltip';
 import Checkbox from '@mui/material/Checkbox';
+import Accordion from '@mui/material/Accordion';
+import AccordionSummary from '@mui/material/AccordionSummary';
+import AccordionDetails from '@mui/material/AccordionDetails';
+import ExpandMoreIcon from '@mui/icons-material/ExpandMore';
 
 import Highlight from 'react-highlight-words';
 
@@ -37,7 +41,17 @@ interface UploadedFile {
   created_at: string;
 }
 
-type Message = { role: 'user' | 'assistant' | 'system'; content: string };
+interface Source {
+  filename: string;
+  excerpt: string;
+  relevance_score: number;
+}
+
+type Message = {
+  role: 'user' | 'assistant' | 'system';
+  content: string;
+  sources?: Source[];
+};
 
 export default function Digitiser() {
   const {
@@ -76,7 +90,6 @@ export default function Digitiser() {
   const [activeChatFilenames, setActiveChatFilenames] = useState<string[]>([]);
 
   const API_BASE = import.meta.env.VITE_DWANI_API_BASE_URL || 'https://discovery-server.dwani.ai';
-  //const API_BASE = 'http://localhost:8000'
   const API_KEY = import.meta.env.VITE_DWANI_API_KEY;
 
   const fetchUploadedFiles = async () => {
@@ -159,10 +172,10 @@ export default function Digitiser() {
 
     setActiveChatFileIds(fileIds);
     setActiveChatFilenames(filenames);
-    setSelectedFileIds(new Set()); // clear selection after opening
+    setSelectedFileIds(new Set()); // clear selection
 
     const count = filenames.length;
-    
+
     setChatHistory([
       {
         role: 'assistant',
@@ -183,6 +196,10 @@ export default function Digitiser() {
     const newUserMessage: Message = { role: 'user', content: userMsg };
     setChatHistory(prev => [...prev, newUserMessage]);
 
+    // Temporary placeholder for assistant response
+    const tempAssistantMessage: Message = { role: 'assistant', content: '', sources: [] };
+    setChatHistory(prev => [...prev, tempAssistantMessage]);
+
     try {
       const res = await fetch(`${API_BASE}/chat-with-document`, {
         method: 'POST',
@@ -191,7 +208,7 @@ export default function Digitiser() {
           'X-API-KEY': API_KEY || '',
         },
         body: JSON.stringify({
-          file_ids: activeChatFileIds, // array of file IDs
+          file_ids: activeChatFileIds,
           messages: [
             ...chatHistory.filter(m => m.role !== 'system'),
             newUserMessage
@@ -204,15 +221,25 @@ export default function Digitiser() {
         throw new Error(errData.detail || 'Chat failed');
       }
 
-      const { answer } = await res.json();
-      setChatHistory(prev => [
-        ...prev,
-        { role: 'assistant', content: answer?.trim() || 'No reply.' }
-      ]);
+      const data = await res.json();
+      const answer = data.answer?.trim() || 'No reply.';
+      const sources: Source[] = data.sources || [];
+
+      // Replace temp message with full answer + sources
+      setChatHistory(prev => {
+        const updated = [...prev];
+        updated[updated.length - 1] = {
+          role: 'assistant',
+          content: answer,
+          sources
+        };
+        return updated;
+      });
+
     } catch (err) {
       setChatError(err instanceof Error ? err.message : 'Failed to get response');
-      // Remove the pending user message on error
-      setChatHistory(prev => prev.slice(0, -1));
+      // Remove user message and temp assistant on error
+      setChatHistory(prev => prev.slice(0, -2));
     } finally {
       setChatLoading(false);
     }
@@ -370,14 +397,13 @@ export default function Digitiser() {
 
         {error && <Alert severity="error" onClose={clearError} sx={{ width: '100%' }}>{error}</Alert>}
 
-        {/* Simplified success message (no huge text preview) */}
+        {/* Simplified success message */}
         {status === 'completed' && fileId && (
           <Alert severity="success" sx={{ mt: 2 }}>
             Extraction complete! You can now chat with the document or download the clean PDF.
           </Alert>
         )}
 
-        {/* Optional: Keep preview/download buttons for newly uploaded file */}
         {status === 'completed' && fileId && (
           <Stack direction="row" spacing={2} sx={{ mt: 2, justifyContent: 'flex-end' }}>
             <Button variant="outlined" onClick={handleOpenPreview}>Preview PDF</Button>
@@ -395,7 +421,7 @@ export default function Digitiser() {
         <DialogActions><Button onClick={handleClosePreview}>Close</Button></DialogActions>
       </Dialog>
 
-      {/* Chat Dialog */}
+      {/* Chat Dialog with Source Citations */}
       <Dialog open={chatOpen} onClose={handleCloseChat} maxWidth="md" fullWidth>
         <DialogTitle>
           <Stack direction="row" justifyContent="space-between" alignItems="center">
@@ -443,16 +469,55 @@ export default function Digitiser() {
             <List>
               {chatHistory.filter(m => m.role !== 'system').map((msg, i) => (
                 <ListItem key={i} sx={{ justifyContent: msg.role === 'user' ? 'flex-end' : 'flex-start' }}>
-                  <Paper elevation={1} sx={{
-                    p: 2,
-                    maxWidth: '80%',
-                    bgcolor: msg.role === 'user' ? 'primary.light' : 'grey.100',
-                    color: msg.role === 'user' ? 'white' : 'text.primary'
-                  }}>
-                    <Typography variant="subtitle2" fontWeight="bold">
+                  <Paper
+                    elevation={1}
+                    sx={{
+                      p: 2,
+                      maxWidth: '85%',
+                      bgcolor: msg.role === 'user' ? 'primary.light' : 'grey.100',
+                      color: msg.role === 'user' ? 'white' : 'text.primary'
+                    }}
+                  >
+                    <Typography variant="subtitle2" fontWeight="bold" gutterBottom>
                       {msg.role === 'user' ? 'You' : 'Assistant'}
                     </Typography>
-                    <Typography whiteSpace="pre-wrap">{msg.content}</Typography>
+
+                    <Typography whiteSpace="pre-wrap" sx={{ mb: msg.sources && msg.sources.length > 0 ? 2 : 0 }}>
+                      {msg.content || <i>Thinking...</i>}
+                    </Typography>
+
+                    {/* Source Citations Accordion */}
+                    {msg.sources && msg.sources.length > 0 && (
+                      <Accordion elevation={0} sx={{ bgcolor: 'background.paper', mt: 1 }}>
+                        <AccordionSummary
+                          expandIcon={<ExpandMoreIcon />}
+                          sx={{ fontSize: '0.875rem', minHeight: '36px', '& .MuiAccordionSummary-content': { my: 0.5 } }}
+                        >
+                          <Typography variant="caption" fontWeight="medium">
+                            Sources ({msg.sources.length})
+                          </Typography>
+                        </AccordionSummary>
+                        <AccordionDetails sx={{ pt: 0 }}>
+                          <Stack spacing={2}>
+                            {msg.sources.map((source, idx) => (
+                              <Box key={idx} sx={{ fontSize: '0.875rem' }}>
+                                <Typography variant="caption" color="text.secondary" gutterBottom>
+                                  <strong>{source.filename}</strong> (relevance: {source.relevance_score.toFixed(2)})
+                                </Typography>
+                                <Paper variant="outlined" sx={{ p: 1.5, bgcolor: 'grey.50', mt: 0.5 }}>
+                                  <Highlight
+                                    highlightClassName="source-highlight"
+                                    searchWords={userMessage.split(' ').filter(w => w.length > 3)}
+                                    textToHighlight={source.excerpt}
+                                    autoEscape={true}
+                                  />
+                                </Paper>
+                              </Box>
+                            ))}
+                          </Stack>
+                        </AccordionDetails>
+                      </Accordion>
+                    )}
                   </Paper>
                 </ListItem>
               ))}
