@@ -586,6 +586,20 @@ def merge_pdf(request: MergePdfRequest, db: Session = Depends(get_db)):
         headers={"Content-Disposition": f'attachment; filename="merged_clean_documents.pdf"'}
     )
 
+@app.delete("/files/{file_id}", tags=["Files"])
+def delete_file(file_id: str, db: Session = Depends(get_db)):
+    record = db.query(FileRecord).filter(FileRecord.id == file_id).first()
+    if not record:
+        raise HTTPException(status_code=404, detail="File not found")
+
+    # Delete from Chroma
+    collection.delete(where={"file_id": file_id})
+
+    db.delete(record)
+    db.commit()
+
+    return {"message": "File deleted successfully"}
+
 # -------------------------- Run Server --------------------------
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Run the dwani.ai FastAPI server")
