@@ -2,111 +2,79 @@ import argparse
 import asyncio
 import base64
 import enum
+import hashlib
 import logging
 import logging.config
 import os
 import uuid
-import unicodedata
-import re
-import hashlib
 from datetime import datetime
 from io import BytesIO
 from typing import List, Optional
 
 import chromadb
 from chromadb.utils import embedding_functions
-
-from fastapi import (
-    FastAPI,
-    File,
-    UploadFile,
-    HTTPException,
-    BackgroundTasks,
-    Depends,
-    Body,
-)
+from fastapi import FastAPI, UploadFile, File, HTTPException, BackgroundTasks, Depends, Body
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
-
-from pydantic import BaseModel
-
-import uvicorn
+from fpdf import FPDF
 from openai import AsyncOpenAI
 from pdf2image import convert_from_bytes
 from PIL import Image
+from pydantic import BaseModel
+from sqlalchemy import Column, String, Text, DateTime, create_engine
+from sqlalchemy.ext.declarative import declarative_base
+from sqlalchemy.orm import sessionmaker, Session
+import unicodedata
 
-# For PDF regeneration
-from fpdf import FPDF
+import uvicorn
 
-# -------------------------- Logging Setup --------------------------
-logging_config = {
+# ========================= CONFIG & LOGGING =========================
+
+logging.config.dictConfig({
     "version": 1,
     "disable_existing_loggers": False,
-    "formatters": {
-        "simple": {"format": "%(asctime)s - %(name)s - %(levelname)s - %(message)s"},
-    },
+    "formatters": {"simple": {"format": "%(asctime)s - %(name)s - %(levelname)s - %(message)s"}},
     "handlers": {
-        "stdout": {
-            "class": "logging.StreamHandler",
-            "formatter": "simple",
-            "stream": "ext://sys.stdout",
-        },
+        "console": {"class": "logging.StreamHandler", "formatter": "simple"},
         "file": {
             "class": "logging.handlers.RotatingFileHandler",
             "formatter": "simple",
             "filename": "dwani_api.log",
-            "maxBytes": 10 * 1024 * 1024,  # 10MB
+            "maxBytes": 10_000_000,
             "backupCount": 5,
         },
     },
-    "loggers": {
-        "root": {
-            "level": "INFO",
-            "handlers": ["stdout", "file"],
-        },
-    },
-}
+    "root": {"level": "INFO", "handlers": ["console", "file"]},
+})
 
-logging.config.dictConfig(logging_config)
 logger = logging.getLogger("dwani_server")
 
-# -------------------------- FastAPI App Setup --------------------------
+# Environment variables
+DWANI_API_BASE_URL = os.getenv("DWANI_API_BASE_URL")
+if not DWANI_API_BASE_URL:
+    raise RuntimeError("DWANI_API_BASE_URL environment variable is required.")
+
+FONT_PATH = os.path.join(os.path.dirname(__file__), "fonts", "DejaVuSans.ttf")
+if not os.path.exists(FONT_PATH):
+    logger.warning("DejaVuSans.ttf not found – PDF regeneration will fail until added.")
+
+# ========================= FASTAPI APP =========================
+
 app = FastAPI(
     title="dwani.ai API",
-    description="A multimodal Inference API designed for Privacy – Text Extraction & Document Regeneration",
+    description="Privacy-focused multimodal document extraction, regeneration, and RAG API",
     version="1.0.0",
-    openapi_tags=[
-        {"name": "Legacy", "description": "Original direct extraction endpoint"},
-        {"name": "Files", "description": "Persistent file upload, extraction, and regeneration"},
-        {"name": "Utility", "description": "General utility endpoints"},
-    ],
 )
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=[
-        "https://app.dwani.ai",
-        "http://localhost:5173",
-        "http://127.0.0.1:5173",
-    ],
-    allow_credentials=False,
-    allow_methods=["GET", "POST", "OPTIONS", "DELETE"],
-    allow_headers=["X-API-KEY", "Content-Type", "Accept"],
-    max_age=600,
+    allow_origins=["https://app.dwani.ai", "http://localhost:5173", "http://127.0.0.1:5173"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
 )
 
-# -------------------------- Chroma Setup --------------------------
-chroma_client = chromadb.PersistentClient(path="./chroma_db")
-collection = chroma_client.get_or_create_collection(name="documents")
-
-embedding_function = embedding_functions.SentenceTransformerEmbeddingFunction(
-    model_name="all-MiniLM-L6-v2"
-)
-
-# -------------------------- Database Models --------------------------
-from sqlalchemy import create_engine, Column, String, Text, DateTime
-from sqlalchemy.ext.declarative import declarative_base
-from sqlalchemy.orm import sessionmaker, Session
+# ========================= DATABASE =========================
 
 DATABASE_URL = "sqlite:///./files.db"
 engine = create_engine(DATABASE_URL, connect_args={"check_same_thread": False})
@@ -123,8 +91,7 @@ class FileStatus(str, enum.Enum):
 
 class FileRecord(Base):
     __tablename__ = "files"
-
-    id = Column(String, primary_key=True, index=True)
+    id = Column(String, primary_key=True)
     filename = Column(String, index=True)
     content_type = Column(String)
     status = Column(String, default=FileStatus.PENDING)
@@ -137,7 +104,7 @@ class FileRecord(Base):
 Base.metadata.create_all(bind=engine)
 
 
-def get_db() -> Session:
+def get_db():
     db = SessionLocal()
     try:
         yield db
@@ -145,20 +112,15 @@ def get_db() -> Session:
         db.close()
 
 
-def chunk_text(text: str, chunk_size: int = 800, overlap: int = 100) -> List[str]:
-    words = text.split()
-    chunks = []
-    i = 0
-    while i < len(words):
-        chunk = " ".join(words[i:i + chunk_size])
-        chunks.append(chunk)
-        i += chunk_size - overlap
-        if i >= len(words) and len(chunks) > 1:
-            break
-    return chunks
+# ========================= VECTOR STORE =========================
+
+chroma_client = chromadb.PersistentClient(path="./chroma_db")
+collection = chroma_client.get_or_create_collection(name="documents")
+embedding_fn = embedding_functions.SentenceTransformerEmbeddingFunction(model_name="all-MiniLM-L6-v2")
 
 
-# -------------------------- Pydantic Models --------------------------
+# ========================= SCHEMAS =========================
+
 class ExtractionResponse(BaseModel):
     extracted_text: str
     page_count: int
@@ -169,7 +131,7 @@ class FileUploadResponse(BaseModel):
     file_id: str
     filename: str
     status: str = "pending"
-    message: str = "File uploaded successfully. Extraction in progress."
+    message: str
 
 
 class FileRetrieveResponse(BaseModel):
@@ -196,258 +158,203 @@ class MergePdfRequest(BaseModel):
     file_ids: List[str]
 
 
-# -------------------------- Helper Functions --------------------------
-def encode_image(image_io: BytesIO) -> str:
-    return base64.b64encode(image_io.getvalue()).decode("utf-8")
-
-
-def get_async_openai_client(model: str) -> AsyncOpenAI:
-    valid_models = ["gemma3", "gpt-oss"]
-    if model not in valid_models:
-        raise ValueError(f"Invalid model: {model}")
-
-    base_url = os.getenv("DWANI_API_BASE_URL")
-    if not base_url:
-        raise RuntimeError("DWANI_API_BASE_URL environment variable is not set")
-
-    return AsyncOpenAI(api_key="http", base_url=base_url)
-
-
-async def render_pdf_to_images(pdf_bytes: bytes) -> List[Image.Image]:
-    try:
-        images = convert_from_bytes(pdf_bytes, fmt="png")
-        return images
-    except Exception as e:
-        logger.error(f"PDF to image conversion failed: {str(e)}")
-        raise HTTPException(status_code=500, detail="Failed to process PDF pages")
-
+# ========================= UTILS =========================
 
 def clean_text(text: str) -> str:
-    """Remove control characters that can cause rendering issues."""
-    return ''.join(ch for ch in text if unicodedata.category(ch)[0] != 'C' or ch in '\n\r\t')
+    return "".join(ch for ch in text if unicodedata.category(ch)[0] != "C" or ch in "\n\r\t")
 
 
-# -------------------------- Background Task: Extraction + Storage --------------------------
-async def extract_and_store(file_id: str, pdf_bytes: bytes, filename: str, db: Session):
-    db_file = db.query(FileRecord).filter(FileRecord.id == file_id).first()
-    if not db_file:
-        return
+def chunk_text(text: str, chunk_size: int = 800, overlap: int = 100) -> List[str]:
+    words = text.split()
+    chunks = []
+    i = 0
+    while i < len(words):
+        chunk = " ".join(words[i : i + chunk_size])
+        chunks.append(chunk)
+        i += chunk_size - overlap
+        if i >= len(words) and len(chunks) > 1:
+            break
+    return chunks
 
-    db_file.status = FileStatus.PROCESSING
-    db.commit()
 
+def encode_image(image: Image.Image) -> str:
+    buf = BytesIO()
+    image.save(buf, format="JPEG", quality=85)
+    return base64.b64encode(buf.getvalue()).decode("utf-8")
+
+
+async def pdf_to_images(pdf_bytes: bytes) -> List[Image.Image]:
     try:
-        images = await render_pdf_to_images(pdf_bytes)
-        if not images:
-            raise ValueError("No pages extracted from PDF")
-
-        result = ""
-        model = "gemma3"
-        client = get_async_openai_client(model)
-
-        for i, image in enumerate(images):
-            img_io = BytesIO()
-            image.save(img_io, format="JPEG", quality=85)
-            img_io.seek(0)
-            base64_img = encode_image(img_io)
-
-            message_content = [
-                {"type": "image_url", "image_url": {"url": f"data:image/jpeg;base64,{base64_img}"}},
-                {
-                    "type": "text",
-                    "text": f"Extract plain text from page {i+1}. Preserve reading order, headings, lists, and paragraphs. Output clean text only.",
-                },
-            ]
-
-            response = await client.chat.completions.create(
-                model=model,
-                messages=[
-                    {
-                        "role": "system",
-                        "content": "You are an expert OCR assistant. Extract accurate plain text from document images without adding markdown unless necessary.",
-                    },
-                    {"role": "user", "content": message_content},
-                ],
-                temperature=0.2,
-                max_tokens=2048,
-            )
-
-            page_text = response.choices[0].message.content.strip()
-            result += page_text + "\n\n"
-
-        cleaned_text = result.strip()
-        db_file.extracted_text = cleaned_text
-        db_file.status = FileStatus.COMPLETED
-
-        # Create and store embeddings
-        chunks = chunk_text(cleaned_text)
-        chunk_ids = [hashlib.md5(f"{file_id}_{j}".encode()).hexdigest() for j in range(len(chunks))]
-
-        collection.delete(where={"file_id": file_id})
-
-        collection.add(
-            embeddings=embedding_function(chunks),
-            documents=chunks,
-            metadatas=[{"file_id": file_id, "chunk_index": j} for j in range(len(chunks))],
-            ids=chunk_ids
-        )
-
-        logger.info(f"Embedded {len(chunks)} chunks for file {file_id}")
-
+        return convert_from_bytes(pdf_bytes, fmt="png")
     except Exception as e:
-        db_file.status = FileStatus.FAILED
-        db_file.error_message = str(e)
-        logger.error(f"Extraction failed for {file_id}: {e}")
-
-    finally:
-        db_file.updated_at = datetime.utcnow()
-        db.commit()
+        logger.error(f"PDF to image conversion failed: {e}")
+        raise HTTPException(status_code=500, detail="Failed to process PDF")
 
 
-# -------------------------- Endpoints --------------------------
+def get_openai_client(model: str = "gemma3") -> AsyncOpenAI:
+    valid_models = {"gemma3", "gpt-oss"}
+    if model not in valid_models:
+        raise ValueError(f"Invalid model: {model}")
+    return AsyncOpenAI(api_key="http", base_url=DWANI_API_BASE_URL)
 
-@app.post("/app-extract-text", response_model=ExtractionResponse, tags=["Legacy"])
-async def extract_text_endpoint(file: UploadFile = File(...)):
-    if not file.filename.lower().endswith(".pdf") or file.content_type != "application/pdf":
-        raise HTTPException(status_code=400, detail="Only PDF files are allowed")
 
-    pdf_bytes = await file.read()
-    images = await render_pdf_to_images(pdf_bytes)
+# ========================= SERVICES =========================
 
+async def extract_text_from_images(images: List[Image.Image]) -> str:
+    client = get_openai_client()
     result = ""
-    model = "gemma3"
-    client = get_async_openai_client(model)
 
-    for i, image in enumerate(images):
-        img_io = BytesIO()
-        image.save(img_io, format="JPEG", quality=85)
-        img_io.seek(0)
-        base64_img = encode_image(img_io)
-
-        message_content = [
-            {"type": "image_url", "image_url": {"url": f"data:image/jpeg;base64,{base64_img}"}},
-            {"type": "text", "text": f"Extract clean plain text from page {i+1}."},
+    for i, img in enumerate(images):
+        base64_img = encode_image(img)
+        messages = [
+            {"role": "system", "content": "You are an expert OCR assistant. Extract accurate plain text only."},
+            {
+                "role": "user",
+                "content": [
+                    {"type": "image_url", "image_url": {"url": f"data:image/jpeg;base64,{base64_img}"}},
+                    {"type": "text", "text": f"Extract clean plain text from page {i+1}."},
+                ],
+            },
         ]
 
         response = await client.chat.completions.create(
-            model=model,
-            messages=[
-                {"role": "system", "content": "Extract accurate plain text only."},
-                {"role": "user", "content": message_content},
-            ],
+            model="gemma3",
+            messages=messages,
             temperature=0.2,
             max_tokens=2048,
         )
         result += response.choices[0].message.content.strip() + "\n\n"
 
-    return ExtractionResponse(
-        extracted_text=result.strip(),
-        page_count=len(images),
+    return result.strip()
+
+
+async def store_embeddings(file_id: str, text: str):
+    chunks = chunk_text(text)
+    if not chunks:
+        return
+
+    chunk_ids = [hashlib.md5(f"{file_id}_{j}".encode()).hexdigest() for j in range(len(chunks))]
+    collection.delete(where={"file_id": file_id})
+
+    collection.add(
+        embeddings=embedding_fn(chunks),
+        documents=chunks,
+        metadatas=[{"file_id": file_id, "chunk_index": j} for j in range(len(chunks))],
+        ids=chunk_ids,
     )
+    logger.info(f"Stored {len(chunks)} embeddings for file {file_id}")
+
+
+def generate_pdf_from_text(text: str, original_filename: Optional[str] = None) -> BytesIO:
+    pdf = FPDF(format="A4")
+    pdf.set_auto_page_break(auto=True, margin=15)
+    pdf.set_margins(15, 15, 15)
+
+    if not os.path.exists(FONT_PATH):
+        raise HTTPException(status_code=500, detail="Font file missing on server")
+
+    pdf.add_font(fname=FONT_PATH, uni=True)
+    pdf.set_font("DejaVuSans", size=11)
+
+    cleaned = clean_text(text)
+
+    # Split into pages if needed – FPDF handles long text well with multi_cell
+    pdf.add_page()
+    pdf.multi_cell(0, 7, cleaned)
+
+    output = BytesIO()
+    output.write(pdf.output())
+    output.seek(0)
+    return output
+
+
+# ========================= BACKGROUND TASK =========================
+
+async def background_extraction_task(file_id: str, pdf_bytes: bytes, filename: str, db: Session):
+    file_record = db.query(FileRecord).filter(FileRecord.id == file_id).first()
+    if not file_record:
+        return
+
+    file_record.status = FileStatus.PROCESSING
+    db.commit()
+
+    try:
+        images = await pdf_to_images(pdf_bytes)
+        extracted = await extract_text_from_images(images)
+
+        file_record.extracted_text = extracted
+        file_record.status = FileStatus.COMPLETED
+        await store_embeddings(file_id, extracted)
+
+        logger.info(f"Extraction completed for {filename} ({file_id})")
+    except Exception as e:
+        file_record.status = FileStatus.FAILED
+        file_record.error_message = str(e)
+        logger.error(f"Extraction failed for {file_id}: {e}")
+    finally:
+        file_record.updated_at = datetime.utcnow()
+        db.commit()
+
+
+# ========================= ROUTES =========================
+
+@app.post("/app-extract-text", response_model=ExtractionResponse, tags=["Legacy"])
+async def legacy_extract_text(file: UploadFile = File(...)):
+    if not file.filename.lower().endswith(".pdf"):
+        raise HTTPException(status_code=400, detail="Only PDF files allowed")
+
+    pdf_bytes = await file.read()
+    images = await pdf_to_images(pdf_bytes)
+    text = await extract_text_from_images(images)
+
+    return ExtractionResponse(extracted_text=text, page_count=len(images))
 
 
 @app.post("/files/upload", response_model=FileUploadResponse, tags=["Files"])
-async def upload_file(
-    background_tasks: BackgroundTasks,
-    file: UploadFile = File(...),
-    db: Session = Depends(get_db),
-):
-    if not file.filename.lower().endswith(".pdf"):
+async def upload_file(file: UploadFile = File(...), background_tasks: BackgroundTasks, db: Session = Depends(get_db)):
+    if not file.filename.lower().endswith(".pdf") or file.content_type != "application/pdf":
         raise HTTPException(status_code=400, detail="Only PDF files supported")
-
-    if file.content_type != "application/pdf":
-        raise HTTPException(status_code=400, detail="Invalid file type")
 
     content = await file.read()
     file_id = str(uuid.uuid4())
 
-    db_file = FileRecord(
-        id=file_id,
-        filename=file.filename,
-        content_type=file.content_type,
-        status=FileStatus.PENDING,
-    )
-    db.add(db_file)
+    record = FileRecord(id=file_id, filename=file.filename, content_type=file.content_type)
+    db.add(record)
     db.commit()
-    db.refresh(db_file)
 
-    background_tasks.add_task(extract_and_store, file_id, content, file.filename, db)
+    background_tasks.add_task(background_extraction_task, file_id, content, file.filename, db)
 
-    return FileUploadResponse(
-        file_id=file_id,
-        filename=file.filename,
-        message="Upload successful. Extraction in progress.",
-    )
+    return FileUploadResponse(file_id=file_id, filename=file.filename, message="Upload successful. Processing in background.")
 
 
 @app.get("/files/{file_id}", response_model=FileRetrieveResponse, tags=["Files"])
-def get_file_status(file_id: str, db: Session = Depends(get_db)):
+def get_file(file_id: str, db: Session = Depends(get_db)):
     record = db.query(FileRecord).filter(FileRecord.id == file_id).first()
     if not record:
         raise HTTPException(status_code=404, detail="File not found")
-
-    return FileRetrieveResponse(
-        file_id=record.id,
-        filename=record.filename,
-        status=record.status,
-        extracted_text=record.extracted_text,
-        error_message=record.error_message,
-        created_at=record.created_at,
-        updated_at=record.updated_at,
-    )
+    return record
 
 
 @app.get("/files/{file_id}/pdf", tags=["Files"])
-def download_regenerated_pdf(file_id: str, db: Session = Depends(get_db)):
+def download_clean_pdf(file_id: str, db: Session = Depends(get_db)):
     record = db.query(FileRecord).filter(FileRecord.id == file_id).first()
     if not record:
         raise HTTPException(status_code=404, detail="File not found")
-
     if record.status != FileStatus.COMPLETED or not record.extracted_text:
-        raise HTTPException(status_code=400, detail="Text extraction not complete or failed")
+        raise HTTPException(status_code=400, detail="Document not processed yet")
 
-    pdf = FPDF(format='A4')
-    pdf.add_page()
-    pdf.set_auto_page_break(auto=True, margin=20)
-    pdf.set_margins(left=20, top=20, right=20)
-
-    font_path = os.path.join(os.path.dirname(__file__), "fonts", "DejaVuSans.ttf")
-    if not os.path.exists(font_path):
-        raise HTTPException(status_code=500, detail="Font file DejaVuSans.ttf not found")
-
-    pdf.add_font(fname=font_path, uni=True)
-    pdf.set_font("DejaVuSans", size=11)
-
-    text = clean_text(record.extracted_text)
-    pdf.write(h=7, txt=text)
-
-    pdf_bytes = pdf.output()
+    pdf_io = generate_pdf_from_text(record.extracted_text, record.filename)
+    clean_name = f"clean_{record.filename.rsplit('.', 1)[0]}.pdf"
 
     return StreamingResponse(
-        BytesIO(pdf_bytes),
+        pdf_io,
         media_type="application/pdf",
-        headers={
-            "Content-Disposition": f'attachment; filename="clean_{record.filename}"'
-        }
+        headers={"Content-Disposition": f'attachment; filename="{clean_name}"'},
     )
 
 
-@app.get("/files/", tags=["Files"])
-def list_files(db: Session = Depends(get_db), limit: int = 20):
-    files = db.query(FileRecord).order_by(FileRecord.created_at.desc()).limit(limit).all()
-    return [
-        {
-            "file_id": f.id,
-            "filename": f.filename,
-            "status": f.status,
-            "created_at": f.created_at.isoformat(),
-        }
-        for f in files
-    ]
-
-
-@app.post("/chat-with-document", tags=["Files"])
-async def chat_with_document(request: MultiChatRequest, db: Session = Depends(get_db)):
+@app.post("/files/merge-pdf", tags=["Files"])
+async def merge_pdfs(request: MergePdfRequest = Body(...), db: Session = Depends(get_db)):
     if not request.file_ids:
         raise HTTPException(status_code=400, detail="At least one file_id required")
 
@@ -455,146 +362,105 @@ async def chat_with_document(request: MultiChatRequest, db: Session = Depends(ge
     if len(records) != len(request.file_ids):
         raise HTTPException(status_code=404, detail="One or more files not found")
 
-    for record in records:
-        if record.status != FileStatus.COMPLETED:
-            raise HTTPException(status_code=400, detail=f"Document {record.filename} is not ready")
+    for r in records:
+        if r.status != FileStatus.COMPLETED or not r.extracted_text:
+            raise HTTPException(status_code=400, detail=f"File {r.filename} not ready")
 
-    user_messages = [m for m in request.messages if m.role == "user"]
-    if not user_messages:
-        raise HTTPException(status_code=400, detail="No user question")
-    question = user_messages[-1].content
-
-    query_embedding = embedding_function([question])
-    results = collection.query(
-        query_embeddings=query_embedding,
-        n_results=12,  # Increased from 6 to 12 for better recall
-        where={"file_id": {"$in": request.file_ids}},
-        include=["documents", "metadatas", "distances"]
-    )
-
-    # Safely extract results
-    documents = results.get('documents', [[]])[0] or []
-    metadatas = results.get('metadatas', [[]])[0] or []
-    distances = results.get('distances', [[]])[0] or []
-
-    context_parts = []
-    sources = []
-
-    # Lowered threshold — now allows all top chunks (relevance >= 0.0)
-    min_relevance = 0.0
-
-    for chunk, meta, distance in zip(documents, metadatas, distances):
-        if not meta or 'file_id' not in meta:
-            continue
-        relevance = 1 - distance
-        if relevance < min_relevance:
-            continue
-
-        file_id = meta['file_id']
-        filename = next((r.filename for r in records if r.id == file_id), "Unknown Document")
-
-        context_parts.append(chunk)
-        sources.append({
-            "filename": filename,
-            "excerpt": chunk.strip(),
-            "relevance_score": round(relevance, 3)
-        })
-
-    context = "\n\n".join(context_parts) if context_parts else "No relevant content was found in the document."
-
-    system_prompt = f"""You are an expert assistant. Answer the question using only the provided document context.
-If the answer cannot be found, say "I don't know".
-
-Context:
-{context}
-
-Answer clearly and concisely."""
-
-    full_messages = [
-        {"role": "system", "content": system_prompt},
-        *[{"role": m.role, "content": m.content} for m in request.messages]
-    ]
-
-    model = "gemma3"
-    client = get_async_openai_client(model)
-
-    try:
-        response = await client.chat.completions.create(
-            model=model,
-            messages=full_messages,
-            temperature=0.5,
-            max_tokens=1024,
-        )
-        answer = response.choices[0].message.content.strip()
-
-        sources.sort(key=lambda x: x['relevance_score'], reverse=True)
-
-        return {
-            "answer": answer,
-            "sources": sources[:5]  # Show top 5 sources
-        }
-    except Exception as e:
-        logger.error(f"Chat failed: {e}")
-        raise HTTPException(status_code=500, detail="Failed to generate response")
-
-
-from fastapi.responses import StreamingResponse
-from io import BytesIO
-import os
-import unicodedata
-
-@app.post("/files/merge-pdf", tags=["Files"])
-async def merge_pdf(request: MergePdfRequest = Body(...), db: Session = Depends(get_db)):
-    if len(request.file_ids) == 0:
-        raise HTTPException(status_code=400, detail="At least one file_id required")
-
-    records = db.query(FileRecord).filter(FileRecord.id.in_(request.file_ids)).all()
-    if len(records) != len(request.file_ids):
-        raise HTTPException(status_code=404, detail="One or more files not found")
-
-    for record in records:
-        if record.status != FileStatus.COMPLETED or not record.extracted_text:
-            raise HTTPException(
-                status_code=400,
-                detail=f"Document '{record.filename}' is not ready (status: {record.status})"
-            )
-
-    # Generate PDF
-    pdf = FPDF(format='A4')
+    pdf = FPDF(format="A4")
     pdf.set_auto_page_break(auto=True, margin=15)
     pdf.set_margins(15, 15, 15)
-
-    font_path = os.path.join(os.path.dirname(__file__), "fonts", "DejaVuSans.ttf")
-    if not os.path.exists(font_path):
-        raise HTTPException(status_code=500, detail="Font file DejaVuSans.ttf not found on server")
-
-    pdf.add_font(fname=font_path, uni=True)
+    pdf.add_font(fname=FONT_PATH, uni=True)
     pdf.set_font("DejaVuSans", size=11)
 
     for record in records:
         pdf.add_page()
-        cleaned_text = ''.join(
-            ch for ch in record.extracted_text 
-            if unicodedata.category(ch)[0] != 'C' or ch in '\n\r\t'
-        )
-        pdf.multi_cell(0, 7, cleaned_text)
+        pdf.multi_cell(0, 7, clean_text(record.extracted_text))
 
-    pdf_bytes = pdf.output()
+    output = BytesIO(pdf.output())
+    output.seek(0)
 
-    # Smart filename
-    if len(records) == 1:
-        base_name = records[0].filename.rsplit('.', 1)[0]
-        filename = f"clean_{base_name}.pdf"
-    else:
-        filename = f"merged_clean_{len(records)}_documents.pdf"
+    filename = (
+        f"clean_{records[0].filename.rsplit('.', 1)[0]}.pdf"
+        if len(records) == 1
+        else f"merged_clean_{len(records)}_docs.pdf"
+    )
 
     return StreamingResponse(
-        BytesIO(pdf_bytes),
+        output,
         media_type="application/pdf",
-        headers={
-            "Content-Disposition": f'attachment; filename="{filename}"'
-        }
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
     )
+
+
+@app.get("/files/", tags=["Files"])
+def list_files(limit: int = 20, db: Session = Depends(get_db)):
+    files = db.query(FileRecord).order_by(FileRecord.created_at.desc()).limit(limit).all()
+    return [{"file_id": f.id, "filename": f.filename, "status": f.status, "created_at": f.created_at.isoformat()} for f in files]
+
+
+@app.post("/chat-with-document", tags=["Files"])
+async def chat_with_documents(request: MultiChatRequest, db: Session = Depends(get_db)):
+    if not request.file_ids:
+        raise HTTPException(status_code=400, detail="file_ids required")
+
+    records = db.query(FileRecord).filter(FileRecord.id.in_(request.file_ids)).all()
+    if len(records) != len(request.file_ids):
+        raise HTTPException(status_code=404, detail="Some files not found")
+
+    for r in records:
+        if r.status != FileStatus.COMPLETED:
+            raise HTTPException(status_code=400, detail=f"File {r.filename} not processed")
+
+    user_msg = [m for m in request.messages if m.role == "user"]
+    if not user_msg:
+        raise HTTPException(status_code=400, detail="No user question")
+    question = user_msg[-1].content
+
+    results = collection.query(
+        query_embeddings=embedding_fn([question]),
+        n_results=12,
+        where={"file_id": {"$in": request.file_ids}},
+        include=["documents", "metadatas", "distances"],
+    )
+
+    docs = results["documents"][0] if results["documents"] else []
+    metas = results["metadatas"][0] if results["metadatas"] else []
+    distances = results["distances"][0] if results["distances"] else []
+
+    context_parts = []
+    sources = []
+
+    for doc, meta, dist in zip(docs, metas, distances):
+        relevance = 1 - dist
+        if relevance < 0.0:
+            continue
+        filename = next((r.filename for r in records if r.id == meta["file_id"]), "Unknown")
+        context_parts.append(doc)
+        sources.append({"filename": filename, "excerpt": doc[:300], "relevance_score": round(relevance, 3)})
+
+    context = "\n\n".join(context_parts) or "No relevant content found."
+
+    system_prompt = f"""You are an expert assistant. Answer using only the provided context.
+If the answer is not in the context, say "I don't know".
+
+Context:
+{context}"""
+
+    messages = [{"role": "system", "content": system_prompt}] + [
+        {"role": m.role, "content": m.content} for m in request.messages
+    ]
+
+    client = get_openai_client()
+    response = await client.chat.completions.create(
+        model="gemma3",
+        messages=messages,
+        temperature=0.5,
+        max_tokens=1024,
+    )
+
+    sources.sort(key=lambda x: x["relevance_score"], reverse=True)
+
+    return {"answer": response.choices[0].message.content.strip(), "sources": sources[:5]}
 
 
 @app.delete("/files/{file_id}", tags=["Files"])
@@ -604,16 +470,15 @@ def delete_file(file_id: str, db: Session = Depends(get_db)):
         raise HTTPException(status_code=404, detail="File not found")
 
     collection.delete(where={"file_id": file_id})
-
     db.delete(record)
     db.commit()
-
     return {"message": "File deleted successfully"}
 
 
-# -------------------------- Run Server --------------------------
+# ========================= ENTRY POINT =========================
+
 if __name__ == "__main__":
-    parser = argparse.ArgumentParser(description="Run the dwani.ai FastAPI server")
+    parser = argparse.ArgumentParser()
     parser.add_argument("--host", type=str, default="0.0.0.0")
     parser.add_argument("--port", type=int, default=8000)
     args = parser.parse_args()

@@ -1,64 +1,71 @@
-import { useState, useEffect } from 'react';
-import Box from '@mui/material/Box';
-import Button from '@mui/material/Button';
-import Stack from '@mui/material/Stack';
-import Typography from '@mui/material/Typography';
-import Divider from '@mui/material/Divider';
-import CircularProgress from '@mui/material/CircularProgress';
-import Alert from '@mui/material/Alert';
-import Chip from '@mui/material/Chip';
-import Dialog from '@mui/material/Dialog';
-import DialogActions from '@mui/material/DialogActions';
-import DialogContent from '@mui/material/DialogContent';
-import DialogContentText from '@mui/material/DialogContentText';
-import DialogTitle from '@mui/material/DialogTitle';
-import TextField from '@mui/material/TextField';
-import List from '@mui/material/List';
-import ListItem from '@mui/material/ListItem';
-import ListItemButton from '@mui/material/ListItemButton';
-import ListItemText from '@mui/material/ListItemText';
-import ListItemAvatar from '@mui/material/ListItemAvatar';
-import Avatar from '@mui/material/Avatar';
-import Paper from '@mui/material/Paper';
-import LinearProgress from '@mui/material/LinearProgress';
-import SendIcon from '@mui/icons-material/Send';
-import SearchIcon from '@mui/icons-material/Search';
-import Table from '@mui/material/Table';
-import TableBody from '@mui/material/TableBody';
-import TableCell from '@mui/material/TableCell';
-import TableContainer from '@mui/material/TableContainer';
-import TableHead from '@mui/material/TableHead';
-import TableRow from '@mui/material/TableRow';
-import Tooltip from '@mui/material/Tooltip';
-import Checkbox from '@mui/material/Checkbox';
-import Accordion from '@mui/material/Accordion';
-import AccordionSummary from '@mui/material/AccordionSummary';
-import AccordionDetails from '@mui/material/AccordionDetails';
-import ExpandMoreIcon from '@mui/icons-material/ExpandMore';
-import Drawer from '@mui/material/Drawer';
-import IconButton from '@mui/material/IconButton';
-import MenuIcon from '@mui/icons-material/Menu';
-import DescriptionIcon from '@mui/icons-material/Description';
-import UploadFileIcon from '@mui/icons-material/UploadFile';
-import PictureAsPdfIcon from '@mui/icons-material/PictureAsPdf';
-import DeleteIcon from '@mui/icons-material/Delete';
-import LanguageIcon from '@mui/icons-material/Language';
-import DownloadIcon from '@mui/icons-material/Download';
-import ClearIcon from '@mui/icons-material/Clear'; // NEW IMPORT
-
+import { useState, useEffect, useRef, useCallback } from 'react';
+import {
+  Box,
+  Button,
+  Stack,
+  Typography,
+  Divider,
+  CircularProgress,
+  Alert,
+  Chip,
+  Dialog,
+  DialogActions,
+  DialogContent,
+  DialogContentText,
+  DialogTitle,
+  TextField,
+  List,
+  ListItem,
+  ListItemButton,
+  ListItemText,
+  ListItemAvatar,
+  Avatar,
+  Paper,
+  LinearProgress,
+  Table,
+  TableBody,
+  TableCell,
+  TableContainer,
+  TableHead,
+  TableRow,
+  Tooltip,
+  Checkbox,
+  Accordion,
+  AccordionSummary,
+  AccordionDetails,
+  Drawer,
+  IconButton,
+} from '@mui/material';
+import {
+  Send as SendIcon,
+  Menu as MenuIcon,
+  UploadFile as UploadFileIcon,
+  PictureAsPdf as PictureAsPdfIcon,
+  Delete as DeleteIcon,
+  Language as LanguageIcon,
+  Download as DownloadIcon,
+  Clear as ClearIcon,
+  Description as DescriptionIcon,
+  ExpandMore as ExpandMoreIcon,
+} from '@mui/icons-material';
 import Highlight from 'react-highlight-words';
+
+const API_BASE = import.meta.env.VITE_DWANI_API_BASE_URL || 'https://discovery-server.dwani.ai';
+const API_KEY = import.meta.env.VITE_DWANI_API_KEY;
+const STORAGE_KEY = 'dwani_conversations';
+const GLOBAL_CHAT_ID = 'global-all-documents';
 
 interface UploadedFile {
   file_id: string;
   filename: string;
-  status: string;
+  status: 'pending' | 'processing' | 'completed' | 'failed';
   created_at: string;
 }
 
 interface LocalUpload {
   file: File;
   progress: number;
-  status: 'uploading' | 'pending' | 'processing' | 'completed' | 'failed';
+  status: 'uploading' | 'pending' | 'failed';
   file_id?: string;
   error?: string;
 }
@@ -69,11 +76,11 @@ interface Source {
   relevance_score: number;
 }
 
-type Message = {
-  role: 'user' | 'assistant' | 'system';
+interface Message {
+  role: 'user' | 'assistant';
   content: string;
   sources?: Source[];
-};
+}
 
 interface Conversation {
   id: string;
@@ -85,726 +92,560 @@ interface Conversation {
   isGlobal?: boolean;
 }
 
-const STORAGE_KEY = 'dwani_conversations';
-const GLOBAL_CHAT_ID = 'global-all-documents';
+// ======================= Custom Hook: useDocumentManager =======================
 
-export default function Digitiser() {
-  const [chatOpen, setChatOpen] = useState(false);
-  const [drawerOpen, setDrawerOpen] = useState(false);
-  const [userMessage, setUserMessage] = useState('');
-  const [chatHistory, setChatHistory] = useState<Message[]>([]);
-  const [chatLoading, setChatLoading] = useState(false);
-  const [chatError, setChatError] = useState<string | null>(null);
-  const [currentConversationId, setCurrentConversationId] = useState<string | null>(null);
-
-  const [searchQuery, setSearchQuery] = useState('');
-  const [showSearchResults, setShowSearchResults] = useState(false);
-
+const useDocumentManager = () => {
   const [uploadedFiles, setUploadedFiles] = useState<UploadedFile[]>([]);
-  const [conversations, setConversations] = useState<Conversation[]>([]);
-
   const [localUploads, setLocalUploads] = useState<LocalUpload[]>([]);
   const [isUploading, setIsUploading] = useState(false);
+  const uploadQueueRef = useRef<File[]>([]);
 
-  const [selectedFileIds, setSelectedFileIds] = useState<Set<string>>(new Set());
-  const [activeChatFileIds, setActiveChatFileIds] = useState<string[]>([]);
-  const [activeChatFilenames, setActiveChatFilenames] = useState<string[]>([]);
+  const fetchFiles = useCallback(async () => {
+    try {
+      const res = await fetch(`${API_BASE}/files/`, {
+        headers: { 'X-API-KEY': API_KEY || '' },
+      });
+      if (res.ok) {
+        const data: UploadedFile[] = await res.json();
+        setUploadedFiles(data);
+      }
+    } catch (err) {
+      console.error('Failed to fetch files');
+    }
+  }, []);
 
-  const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
-  const [filesToDelete, setFilesToDelete] = useState<string[]>([]);
+  useEffect(() => {
+    fetchFiles();
+    const interval = setInterval(fetchFiles, 5000);
+    return () => clearInterval(interval);
+  }, [fetchFiles]);
 
-  // NEW: State for clear chat confirmation
-  const [clearChatDialogOpen, setClearChatDialogOpen] = useState(false);
+  const uploadNext = useCallback(async () => {
+    if (uploadQueueRef.current.length === 0) {
+      setIsUploading(false);
+      return;
+    }
 
-  const API_BASE = import.meta.env.VITE_DWANI_API_BASE_URL || 'https://discovery-server.dwani.ai';
-  const API_KEY = import.meta.env.VITE_DWANI_API_KEY;
+    setIsUploading(true);
+    const file = uploadQueueRef.current.shift()!;
 
-  // Load conversations from localStorage
+    setLocalUploads(prev => [...prev, { file, progress: 0, status: 'uploading' }]);
+
+    try {
+      const formData = new FormData();
+      formData.append('file', file);
+
+      const res = await fetch(`${API_BASE}/files/upload`, {
+        method: 'POST',
+        headers: { 'X-API-KEY': API_KEY || '', accept: 'application/json' },
+        body: formData,
+      });
+
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({}));
+        throw new Error(err.detail || 'Upload failed');
+      }
+
+      const data = await res.json();
+      setLocalUploads(prev =>
+        prev.map(u =>
+          u.file === file ? { ...u, file_id: data.file_id, status: 'pending', progress: 100 } : u
+        )
+      );
+    } catch (err) {
+      setLocalUploads(prev =>
+        prev.map(u =>
+          u.file === file
+            ? { ...u, status: 'failed', error: (err as Error).message }
+            : u
+        )
+      );
+    } finally {
+      setTimeout(() => {
+        setLocalUploads(prev => prev.filter(u => u.file !== file));
+        uploadNext();
+      }, 1000);
+    }
+  }, []);
+
+  const enqueueUploads = (files: FileList | null) => {
+    if (!files) return;
+    const pdfs = Array.from(files).filter(f => f.type === 'application/pdf');
+    if (pdfs.length === 0) return;
+
+    uploadQueueRef.current = [...uploadQueueRef.current, ...pdfs];
+    setLocalUploads(prev => [
+      ...prev,
+      ...pdfs.map(f => ({ file: f, progress: 0, status: 'uploading' })),
+    ]);
+    if (!isUploading) uploadNext();
+  };
+
+  const deleteFiles = async (fileIds: string[]) => {
+    const results = await Promise.all(
+      fileIds.map(id =>
+        fetch(`${API_BASE}/files/${id}`, {
+          method: 'DELETE',
+          headers: { 'X-API-KEY': API_KEY || '' },
+        })
+      )
+    );
+
+    const failed = results.filter(r => !r.ok);
+    if (failed.length > 0) alert(`${failed.length} file(s) failed to delete.`);
+
+    setUploadedFiles(prev => prev.filter(f => !fileIds.includes(f.file_id)));
+  };
+
+  const downloadMergedPdf = async (fileIds: string[]) => {
+    if (fileIds.length === 0) return;
+
+    try {
+      const res = await fetch(`${API_BASE}/files/merge-pdf`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'X-API-KEY': API_KEY || '' },
+        body: JSON.stringify({ file_ids: fileIds }),
+      });
+
+      if (!res.ok) throw new Error('Failed to generate merged PDF');
+
+      const blob = await res.blob();
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download =
+        fileIds.length === 1
+          ? `clean_${uploadedFiles.find(f => f.file_id === fileIds[0])?.filename.replace('.pdf', '') || 'document'}.pdf`
+          : `merged_clean_${fileIds.length}_docs.pdf`;
+      a.click();
+      URL.revokeObjectURL(url);
+    } catch {
+      alert('Failed to generate merged PDF');
+    }
+  };
+
+  const downloadSinglePdf = async (fileId: string, filename: string) => {
+    try {
+      const res = await fetch(`${API_BASE}/files/${fileId}/pdf`, {
+        headers: { 'X-API-KEY': API_KEY || '' },
+      });
+      if (!res.ok) throw new Error('Download failed');
+      const blob = await res.blob();
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `clean_${filename}`;
+      a.click();
+      URL.revokeObjectURL(url);
+    } catch {
+      alert('Failed to download cleaned PDF');
+    }
+  };
+
+  return {
+    uploadedFiles,
+    localUploads,
+    isUploading,
+    enqueueUploads,
+    deleteFiles,
+    downloadMergedPdf,
+    downloadSinglePdf,
+    refetch: fetchFiles,
+  };
+};
+
+// ======================= Custom Hook: useChat =======================
+
+const useChat = () => {
+  const [conversations, setConversations] = useState<Conversation[]>([]);
+  const [currentConvId, setCurrentConvId] = useState<string | null>(null);
+  const [chatHistory, setChatHistory] = useState<Message[]>([]);
+  const [activeFileIds, setActiveFileIds] = useState<string[]>([]);
+  const [activeFilenames, setActiveFilenames] = useState<string[]>([]);
+  const [chatOpen, setChatOpen] = useState(false);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
   useEffect(() => {
     const saved = localStorage.getItem(STORAGE_KEY);
     if (saved) {
       try {
         const parsed: Conversation[] = JSON.parse(saved);
         setConversations(parsed.sort((a, b) => b.lastUpdated - a.lastUpdated));
-      } catch (e) {
-        console.error('Failed to parse saved conversations');
-      }
+      } catch {}
     }
   }, []);
 
-  // Save conversations to localStorage
   useEffect(() => {
     if (conversations.length > 0) {
       localStorage.setItem(STORAGE_KEY, JSON.stringify(conversations));
     }
   }, [conversations]);
 
-  // Fetch uploaded files
-  const fetchUploadedFiles = async () => {
-    try {
-      const response = await fetch(`${API_BASE}/files/`, {
-        headers: { 'X-API-KEY': API_KEY || '' },
-      });
-      if (response.ok) {
-        const data = await response.json();
-        setUploadedFiles(data);
-      }
-    } catch (err) {
-      console.error('Failed to fetch files list');
-    }
-  };
-
-  useEffect(() => {
-    fetchUploadedFiles();
-    const interval = setInterval(fetchUploadedFiles, 5000);
-    return () => clearInterval(interval);
-  }, []);
-
-  const getStatusColor = (s: string) => {
-    switch (s) {
-      case 'pending':
-      case 'processing':
-      case 'uploading':
-        return 'warning';
-      case 'completed':
-        return 'success';
-      case 'failed':
-        return 'error';
-      default:
-        return 'default';
-    }
-  };
-
-  const getStatusText = (s: string) => {
-    switch (s) {
-      case 'uploading': return 'Uploading';
-      case 'pending': return 'Waiting';
-      case 'processing': return 'Processing';
-      case 'completed': return 'Ready';
-      case 'failed': return 'Failed';
-      default:
-        return 'Unknown';
-    }
-  };
-
-  const formatDate = (dateStr: string) => new Date(dateStr).toLocaleString();
-  const formatRelativeTime = (timestamp: number) => {
-    const now = Date.now();
-    const diff = now - timestamp;
-    const minutes = Math.floor(diff / 60000);
-    if (minutes < 60) return `${minutes}m ago`;
-    const hours = Math.floor(minutes / 60);
-    if (hours < 24) return `${hours}h ago`;
-    const days = Math.floor(hours / 24);
-    if (days < 7) return `${days}d ago`;
-    return new Date(timestamp).toLocaleDateString();
-  };
-
-  // Multiple file upload
-  const handleFileChange = (event: React.ChangeEvent<HTMLInputElement>) => {
-    const files = event.target.files;
-    if (!files || files.length === 0) return;
-
-    const newUploads: LocalUpload[] = [];
-    for (let i = 0; i < files.length; i++) {
-      const file = files[i];
-      if (file.type === 'application/pdf') {
-        newUploads.push({
-          file,
-          progress: 0,
-          status: 'uploading'
-        });
-      }
-    }
-
-    if (newUploads.length > 0) {
-      setLocalUploads(prev => [...prev, ...newUploads]);
-      uploadNextFile([...localUploads, ...newUploads]);
-    }
-
-    event.target.value = '';
-  };
-
-  const uploadNextFile = async (queue: LocalUpload[]) => {
-    if (queue.length === 0 || isUploading) return;
-
-    setIsUploading(true);
-    const current = queue[0];
-    const remaining = queue.slice(1);
-
-    try {
-      const formData = new FormData();
-      formData.append('file', current.file);
-
-      const response = await fetch(`${API_BASE}/files/upload`, {
-        method: 'POST',
-        headers: {
-          'accept': 'application/json',
-          'X-API-KEY': API_KEY || '',
-        },
-        body: formData,
-      });
-
-      if (!response.ok) {
-        const err = await response.json().catch(() => ({}));
-        throw new Error(err.detail || 'Upload failed');
-      }
-
-      const data = await response.json();
-      setLocalUploads(prev => prev.map(u =>
-        u === current
-          ? { ...u, file_id: data.file_id, status: 'pending', progress: 100 }
-          : u
-      ));
-
-    } catch (err) {
-      setLocalUploads(prev => prev.map(u =>
-        u === current
-          ? { ...u, status: 'failed', error: err instanceof Error ? err.message : 'Upload failed' }
-          : u
-      ));
-    } finally {
-      setTimeout(() => {
-        setLocalUploads(prev => prev.filter(u => u !== current));
-        uploadNextFile(remaining);
-        if (remaining.length === 0) setIsUploading(false);
-      }, 1000);
-    }
-  };
-
-  const handleGenerateMergedPdf = async () => {
-    const selectedCompleted = allFiles
-      .filter(f => selectedFileIds.has(f.file_id) && f.status === 'completed');
-
-    if (selectedCompleted.length === 0) {
-      alert('Please select at least one completed document.');
-      return;
-    }
-
-    try {
-      const response = await fetch(`${API_BASE}/files/merge-pdf`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'X-API-KEY': API_KEY || '',
-        },
-        body: JSON.stringify({
-          file_ids: selectedCompleted.map(f => f.file_id)
-        }),
-      });
-
-      if (!response.ok) {
-        const err = await response.json().catch(() => ({}));
-        throw new Error(err.detail || 'Failed to generate PDF');
-      }
-
-      const blob = await response.blob();
-      const url = URL.createObjectURL(blob);
-      const a = document.createElement('a');
-      a.href = url;
-
-      let downloadFilename;
-      if (selectedCompleted.length === 1) {
-        const originalName = selectedCompleted[0].filename.replace(/\.pdf$/i, '');
-        downloadFilename = `clean_${originalName}.pdf`;
-      } else {
-        const baseNames = selectedCompleted
-          .map(f => f.filename.replace(/\.pdf$/i, ''))
-          .join('_');
-        const dateStr = new Date().toISOString().slice(0, 10);
-        downloadFilename = `merged_clean_${baseNames}_${dateStr}.pdf`;
-      }
-
-      a.download = downloadFilename;
-      document.body.appendChild(a);
-      a.click();
-      document.body.removeChild(a);
-      URL.revokeObjectURL(url);
-    } catch (err) {
-      alert(err instanceof Error ? err.message : 'Failed to generate PDF');
-    }
-  };
-
-  // Download single regenerated PDF
-  const handleDownloadPdf = async (fileId: string, originalFilename: string) => {
-    try {
-      const response = await fetch(`${API_BASE}/files/${fileId}/pdf`, {
-        headers: { 'X-API-KEY': API_KEY || '' },
-      });
-
-      if (!response.ok) {
-        const err = await response.json().catch(() => ({}));
-        throw new Error(err.detail || 'Failed to download PDF');
-      }
-
-      const blob = await response.blob();
-      const url = URL.createObjectURL(blob);
-      const a = document.createElement('a');
-      a.href = url;
-      const cleanName = originalFilename.replace(/\.pdf$/i, '');
-      a.download = `clean_${cleanName}.pdf`;
-      document.body.appendChild(a);
-      a.click();
-      document.body.removeChild(a);
-      URL.revokeObjectURL(url);
-    } catch (err) {
-      alert('Failed to download cleaned PDF');
-    }
-  };
-
-  const handleDeleteFiles = async () => {
-    if (filesToDelete.length === 0) return;
-
-    try {
-      const deletePromises = filesToDelete.map(fileId =>
-        fetch(`${API_BASE}/files/${fileId}`, {
-          method: 'DELETE',
-          headers: {
-            'X-API-KEY': API_KEY || '',
-          },
-        })
-      );
-
-      const results = await Promise.all(deletePromises);
-      const failed = results.filter(r => !r.ok);
-
-      if (failed.length > 0) {
-        alert(`${failed.length} file(s) could not be deleted.`);
-      }
-
-      setUploadedFiles(prev => prev.filter(f => !filesToDelete.includes(f.file_id)));
-      setSelectedFileIds(prev => {
-        const newSet = new Set(prev);
-        filesToDelete.forEach(id => newSet.delete(id));
-        return newSet;
-      });
-
-      setConversations(prev => prev.filter(conv =>
-        !conv.fileIds.some(id => filesToDelete.includes(id))
-      ));
-
-    } catch (err) {
-      alert('Error deleting files. Please try again.');
-    } finally {
-      setDeleteDialogOpen(false);
-      setFilesToDelete([]);
-    }
-  };
-
-  const openDeleteDialog = (fileIds: string[]) => {
-    setFilesToDelete(fileIds);
-    setDeleteDialogOpen(true);
-  };
-
-  const toggleDrawer = () => setDrawerOpen(prev => !prev);
-  const toggleSearch = () => {
-    setShowSearchResults(prev => !prev);
-    if (showSearchResults) setSearchQuery('');
-  };
-
-  const getConversationId = (fileIds: string[]) => fileIds.sort().join('|');
-
-  const openChatForFiles = (fileIds: string[], filenames: string[], isGlobal = false) => {
+  const openChat = (fileIds: string[], filenames: string[], isGlobal = false) => {
     if (fileIds.length === 0) return;
+    const id = isGlobal ? GLOBAL_CHAT_ID : fileIds.sort().join('|');
+    const existing = conversations.find(c => c.id === id);
 
-    const convId = isGlobal ? GLOBAL_CHAT_ID : getConversationId(fileIds);
-    const existing = conversations.find(c => c.id === convId);
-
-    setActiveChatFileIds(fileIds);
-    setActiveChatFilenames(filenames);
-    setSelectedFileIds(new Set());
-    setCurrentConversationId(convId);
+    setActiveFileIds(fileIds);
+    setActiveFilenames(filenames);
+    setCurrentConvId(id);
+    setChatOpen(true);
 
     if (existing) {
       setChatHistory(existing.messages);
     } else {
-      const welcomeMsg: Message = {
+      const welcome: Message = {
         role: 'assistant',
         content: isGlobal
-          ? `**Global Chat** loaded with **${fileIds.length} completed document${fileIds.length > 1 ? 's' : ''}**.\n\nAsk anything — I'll search across your entire library!`
-          : `I've loaded ${fileIds.length} document${fileIds.length > 1 ? 's' : ''}: ${filenames.join(', ')}.\n\nAsk me anything — I'll search across all of them!`
+          ? `**Global Chat** loaded with **${fileIds.length}** document${fileIds.length > 1 ? 's' : ''}.\n\nAsk me anything across your library!`
+          : `Loaded **${fileIds.length}** document${fileIds.length > 1 ? 's' : ''}: ${filenames.join(', ')}\n\nAsk me anything!`,
       };
-      setChatHistory([welcomeMsg]);
-
-      const newConv: Conversation = {
-        id: convId,
-        fileIds,
-        filenames,
-        messages: [welcomeMsg],
-        lastUpdated: Date.now(),
-        preview: welcomeMsg.content.slice(0, 60) + '...',
-        isGlobal
-      };
-      setConversations(prev => [newConv, ...prev.filter(c => c.id !== convId)]);
+      setChatHistory([welcome]);
+      setConversations(prev => [
+        { id, fileIds, filenames, messages: [welcome], lastUpdated: Date.now(), preview: welcome.content.slice(0, 60) + '...', isGlobal },
+        ...prev.filter(c => c.id !== id),
+      ]);
     }
-    setChatOpen(true);
   };
 
-  const saveCurrentConversation = () => {
-    if (!currentConversationId || activeChatFileIds.length === 0) return;
+  const sendMessage = async (message: string) => {
+    if (!message.trim() || loading || activeFileIds.length === 0) return;
 
-    const isGlobal = currentConversationId === GLOBAL_CHAT_ID;
-
-    const currentFileIds = isGlobal
-      ? allFiles.filter(f => f.status === 'completed').map(f => f.file_id)
-      : activeChatFileIds;
-
-    const currentFilenames = isGlobal
-      ? allFiles.filter(f => f.status === 'completed').map(f => f.filename)
-      : activeChatFilenames;
-
-    setConversations(prev => {
-      const filtered = prev.filter(c => c.id !== currentConversationId);
-      const lastVisibleMsg = chatHistory.filter(m => m.role !== 'system').slice(-1)[0];
-      const preview = lastVisibleMsg ? lastVisibleMsg.content.slice(0, 60) + '...' : 'New conversation';
-
-      const updatedConv: Conversation = {
-        id: currentConversationId,
-        fileIds: currentFileIds,
-        filenames: currentFilenames,
-        messages: chatHistory,
-        lastUpdated: Date.now(),
-        preview,
-        isGlobal
-      };
-      return [updatedConv, ...filtered];
-    });
-  };
-
-  const handleCloseChat = () => {
-    saveCurrentConversation();
-    setChatOpen(false);
-    setSearchQuery('');
-    setShowSearchResults(false);
-  };
-
-  const handleSendMessage = async () => {
-    if (!userMessage.trim() || chatLoading || activeChatFileIds.length === 0) return;
-
-    const userMsg = userMessage.trim();
-    setUserMessage('');
-    setChatLoading(true);
-    setChatError(null);
-
-    const newUserMessage: Message = { role: 'user', content: userMsg };
-    setChatHistory(prev => [...prev, newUserMessage]);
-
-    const tempAssistantMessage: Message = { role: 'assistant', content: '', sources: [] };
-    setChatHistory(prev => [...prev, tempAssistantMessage]);
+    const userMsg: Message = { role: 'user', content: message.trim() };
+    setChatHistory(prev => [...prev, userMsg, { role: 'assistant', content: '' }]);
+    setLoading(true);
+    setError(null);
 
     try {
       const res = await fetch(`${API_BASE}/chat-with-document`, {
         method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'X-API-KEY': API_KEY || '',
-        },
+        headers: { 'Content-Type': 'application/json', 'X-API-KEY': API_KEY || '' },
         body: JSON.stringify({
-          file_ids: activeChatFileIds,
-          messages: [
-            ...chatHistory.filter(m => m.role !== 'system'),
-            newUserMessage
-          ]
+          file_ids: activeFileIds,
+          messages: [...chatHistory, userMsg],
         }),
       });
 
-      if (!res.ok) {
-        const errData = await res.json().catch(() => ({}));
-        throw new Error(errData.detail || 'Chat failed');
-      }
+      if (!res.ok) throw new Error((await res.json().catch(() => ({}))).detail || 'Chat failed');
 
       const data = await res.json();
-      const answer = data.answer?.trim() || 'No reply.';
-      const sources: Source[] = data.sources || [];
-
       setChatHistory(prev => {
         const updated = [...prev];
-        updated[updated.length - 1] = { role: 'assistant', content: answer, sources };
+        updated[updated.length - 1] = {
+          role: 'assistant',
+          content: data.answer?.trim() || 'No response.',
+          sources: data.sources || [],
+        };
         return updated;
       });
 
-      saveCurrentConversation();
-
+      setConversations(prev => {
+        const filtered = prev.filter(c => c.id !== currentConvId);
+        const preview = data.answer.slice(0, 60) + '...';
+        return [
+          {
+            id: currentConvId!,
+            fileIds: activeFileIds,
+            filenames: activeFilenames,
+            messages: chatHistory.slice(0, -1).concat({
+              role: 'assistant',
+              content: data.answer,
+              sources: data.sources,
+            }),
+            lastUpdated: Date.now(),
+            preview,
+            isGlobal: currentConvId === GLOBAL_CHAT_ID,
+          },
+          ...filtered,
+        ];
+      });
     } catch (err) {
-      setChatError(err instanceof Error ? err.message : 'Failed to get response');
+      setError((err as Error).message);
       setChatHistory(prev => prev.slice(0, -2));
     } finally {
-      setChatLoading(false);
+      setLoading(false);
     }
   };
 
-  // NEW: Clear chat handler
-  const handleClearChat = () => {
-    if (!currentConversationId) return;
-
-    // Remove conversation from saved list
-    setConversations(prev => prev.filter(c => c.id !== currentConversationId));
-
-    // Reset chat history to welcome message
-    const isGlobal = currentConversationId === GLOBAL_CHAT_ID;
-    const welcomeMsg: Message = {
-      role: 'assistant',
-      content: isGlobal
-        ? `**Global Chat** loaded with **${activeChatFileIds.length} completed document${activeChatFileIds.length > 1 ? 's' : ''}**.\n\nAsk anything — I'll search across your entire library!`
-        : `I've loaded ${activeChatFileIds.length} document${activeChatFileIds.length > 1 ? 's' : ''}: ${activeChatFilenames.join(', ')}.\n\nAsk me anything — I'll search across all of them!`
-    };
-    setChatHistory([welcomeMsg]);
-
-    setClearChatDialogOpen(false);
+  const clearChat = () => {
+    if (!currentConvId) return;
+    setConversations(prev => prev.filter(c => c.id !== currentConvId));
+    const welcome = chatHistory[0];
+    setChatHistory([welcome]);
   };
 
-  // Combined files list with deduplication
-  const serverFileIds = new Set(uploadedFiles.map(f => f.file_id));
+  const closeChat = () => setChatOpen(false);
 
-  const serverDocs = uploadedFiles.map(f => ({
-    ...f,
-    source: 'server' as const,
-    progress: 100,
-    error: undefined,
-  }));
+  return {
+    conversations,
+    chatOpen,
+    chatHistory,
+    loading,
+    error,
+    activeFilenames,
+    currentConvId,
+    openChat,
+    sendMessage,
+    clearChat,
+    closeChat,
+    setError,
+  };
+};
 
-  const localDocs = localUploads
-    .filter(u => !u.file_id || !serverFileIds.has(u.file_id))
-    .map((u, index) => ({
-      file_id: u.file_id || `local-${u.file.name}-${u.file.size}-${u.file.lastModified}-${index}`,
+// ======================= Main Component =======================
+
+export default function Digitiser() {
+  const {
+    uploadedFiles,
+    localUploads,
+    isUploading,
+    enqueueUploads,
+    deleteFiles,
+    downloadMergedPdf,
+    downloadSinglePdf,
+  } = useDocumentManager();
+
+  const {
+    conversations,
+    chatOpen,
+    chatHistory,
+    loading: chatLoading,
+    error: chatError,
+    activeFilenames,
+    currentConvId,
+    openChat,
+    sendMessage,
+    clearChat,
+    closeChat,
+    setError: setChatError,
+  } = useChat();
+
+  const [drawerOpen, setDrawerOpen] = useState(false);
+  const [selectedFileIds, setSelectedFileIds] = useState<Set<string>>(new Set());
+  const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
+  const [clearChatDialogOpen, setClearChatDialogOpen] = useState(false);
+  const [userMessage, setUserMessage] = useState('');
+  const [filesToDelete, setFilesToDelete] = useState<string[]>([]);
+
+  // Combined file list
+  const allFiles = [
+    ...uploadedFiles.map(f => ({
+      ...f,
+      source: 'server' as const,
+    })),
+    ...localUploads.map(u => ({
+      file_id: u.file_id || `local-${Date.now()}`,
       filename: u.file.name,
       status: u.status,
       created_at: new Date().toISOString(),
       source: 'local' as const,
-      progress: u.progress,
-      error: u.error,
-    }));
+    })),
+  ].sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime());
 
-  const allFiles = [...serverDocs, ...localDocs]
-    .sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime());
+  const completedFiles = allFiles.filter(f => f.status === 'completed');
+  const selectedCompleted = completedFiles.filter(f => selectedFileIds.has(f.file_id));
 
-  const completedCount = allFiles.filter(f => f.status === 'completed').length;
-  const selectedCompletedCount = allFiles.filter(f => 
-    selectedFileIds.has(f.file_id) && f.status === 'completed'
-  ).length;
+  const formatDate = (date: string) => new Date(date).toLocaleString();
+
+  const getStatusColor = (status: string) => {
+    switch (status) {
+      case 'completed': return 'success';
+      case 'failed': return 'error';
+      default: return 'warning';
+    }
+  };
+
+  const getStatusLabel = (status: string) => {
+    switch (status) {
+      case 'uploading': return 'Uploading';
+      case 'pending': return 'Pending';
+      case 'processing': return 'Processing';
+      case 'completed': return 'Ready';
+      case 'failed': return 'Failed';
+      default: return status;
+    }
+  };
 
   return (
-    <Box sx={{
-      display: 'flex',
-      flexDirection: 'column',
-      alignItems: 'center',
-      p: { xs: 4, sm: 6 },
-      pt: { xs: 10, sm: 12 },
-      minHeight: '100vh',
-      bgcolor: 'background.default',
-    }}>
-      <Stack direction="row" spacing={2} alignItems="center" sx={{ width: { xs: '100%', sm: '90%', md: '1000px' }, mb: 4 }}>
-        <IconButton onClick={toggleDrawer} size="large" edge="start">
-          <MenuIcon />
-        </IconButton>
-        <Typography variant="h5">dwani.ai – Document Intelligence</Typography>
-      </Stack>
+    <Box sx={{ minHeight: '100vh', bgcolor: 'background.default', p: { xs: 2, md: 4 } }}>
+      <Stack spacing={4} sx={{ maxWidth: 1300, mx: 'auto' }}>
+        {/* Header */}
+        <Stack direction="row" spacing={2} alignItems="center">
+          <IconButton onClick={() => setDrawerOpen(true)}>
+            <MenuIcon />
+          </IconButton>
+          <Typography variant="h5">dwani.ai – Document Intelligence</Typography>
+        </Stack>
 
-      <Stack spacing={5} sx={{ width: { xs: '100%', sm: '90%', md: '1000px' } }}>
-
-        {/* Selection Action Bar */}
+        {/* Selection Actions */}
         {selectedFileIds.size > 0 && (
-          <Alert
-            severity="info"
-            action={
-              <Stack direction="row" spacing={1}>
-                <Button
-                  color="inherit"
-                  size="small"
-                  variant="outlined"
-                  startIcon={<PictureAsPdfIcon />}
-                  onClick={handleGenerateMergedPdf}
-                  disabled={selectedCompletedCount === 0}
-                >
-                  Generate PDF ({selectedCompletedCount})
-                </Button>
-                <Button
-                  color="inherit"
-                  size="small"
-                  variant="outlined"
-                  startIcon={<DeleteIcon />}
-                  onClick={() => openDeleteDialog(Array.from(selectedFileIds))}
-                  disabled={selectedFileIds.size === 0}
-                >
-                  Delete ({selectedFileIds.size})
-                </Button>
-                <Button
-                  color="inherit"
-                  size="small"
-                  variant="outlined"
-                  onClick={() => {
-                    const selected = allFiles
-                      .filter(f => selectedFileIds.has(f.file_id) && f.status === 'completed');
-                    if (selected.length > 0) {
-                      openChatForFiles(
-                        selected.map(f => f.file_id),
-                        selected.map(f => f.filename)
-                      );
-                    }
-                  }}
-                  disabled={selectedCompletedCount === 0}
-                >
-                  Chat with {selectedFileIds.size}
-                </Button>
-              </Stack>
-            }
-            sx={{ mb: 2 }}
-          >
+          <Alert severity="info" action={
+            <Stack direction="row" spacing={1}>
+              <Button
+                startIcon={<PictureAsPdfIcon />}
+                onClick={() => downloadMergedPdf(Array.from(selectedFileIds))}
+                disabled={selectedCompleted.length === 0}
+              >
+                Merge PDF ({selectedCompleted.length})
+              </Button>
+              <Button
+                startIcon={<DeleteIcon />}
+                color="error"
+                onClick={() => {
+                  setFilesToDelete(Array.from(selectedFileIds));
+                  setDeleteDialogOpen(true);
+                }}
+              >
+                Delete ({selectedFileIds.size})
+              </Button>
+              <Button
+                onClick={() => openChat(selectedCompleted.map(f => f.file_id), selectedCompleted.map(f => f.filename))}
+                disabled={selectedCompleted.length === 0}
+              >
+                Chat ({selectedCompleted.length})
+              </Button>
+            </Stack>
+          }>
             {selectedFileIds.size} document{selectedFileIds.size > 1 ? 's' : ''} selected
           </Alert>
         )}
 
-        {/* Documents Header with Global Chat Button */}
-        <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 2 }}>
-          <Typography variant="h6">
-            Your Documents ({allFiles.length})
-          </Typography>
-
-          <Tooltip title={completedCount === 0 ? "Waiting for documents to finish processing" : "Chat with all completed documents"}>
-            <span>
-              <Button
-                variant="contained"
-                color="primary"
-                startIcon={<LanguageIcon />}
-                onClick={() => {
-                  const completed = allFiles.filter(f => f.status === 'completed');
-                  openChatForFiles(
-                    completed.map(f => f.file_id),
-                    completed.map(f => f.filename),
-                    true
-                  );
-                }}
-                disabled={completedCount === 0}
-              >
-                Global Chat ({completedCount})
-              </Button>
-            </span>
-          </Tooltip>
+        {/* Documents Header */}
+        <Box display="flex" justifyContent="space-between" alignItems="center">
+          <Typography variant="h6">Your Documents ({allFiles.length})</Typography>
+          <Button
+            variant="contained"
+            startIcon={<LanguageIcon />}
+            onClick={() => openChat(completedFiles.map(f => f.file_id), completedFiles.map(f => f.filename), true)}
+            disabled={completedFiles.length === 0}
+          >
+            Global Chat ({completedFiles.length})
+          </Button>
         </Box>
 
         {/* Documents Table */}
-        <Box>
-          <TableContainer component={Paper} elevation={2} sx={{ maxHeight: 500, overflow: 'auto', borderRadius: 2 }}>
-            <Table stickyHeader>
-              <TableHead>
+        <TableContainer component={Paper} elevation={3} sx={{ borderRadius: 2 }}>
+          <Table stickyHeader>
+            <TableHead>
+              <TableRow>
+                <TableCell padding="checkbox" />
+                <TableCell><strong>Filename</strong></TableCell>
+                <TableCell><strong>Uploaded</strong></TableCell>
+                <TableCell><strong>Status</strong></TableCell>
+                <TableCell align="center"><strong>Actions</strong></TableCell>
+              </TableRow>
+            </TableHead>
+            <TableBody>
+              {allFiles.length === 0 && !isUploading ? (
                 <TableRow>
-                  <TableCell padding="checkbox" sx={{ bgcolor: 'background.paper' }} />
-                  <TableCell sx={{ bgcolor: 'background.paper', fontWeight: 'bold' }}>Filename</TableCell>
-                  <TableCell sx={{ bgcolor: 'background.paper', fontWeight: 'bold' }}>Uploaded</TableCell>
-                  <TableCell sx={{ bgcolor: 'background.paper', fontWeight: 'bold' }}>Status</TableCell>
-                  <TableCell align="center" sx={{ bgcolor: 'background.paper', fontWeight: 'bold' }}>Actions</TableCell>
+                  <TableCell colSpan={5} align="center" sx={{ py: 10, color: 'text.secondary' }}>
+                    <Typography variant="h6">No documents yet</Typography>
+                    <Typography>Click "Select PDFs" below to upload your first documents.</Typography>
+                  </TableCell>
                 </TableRow>
-              </TableHead>
-              <TableBody>
-                {allFiles.length === 0 && !isUploading ? (
-                  <TableRow>
-                    <TableCell colSpan={5} align="center" sx={{ py: 8, color: 'text.secondary' }}>
-                      No documents uploaded yet. Click below to add some!
+              ) : (
+                allFiles.map((file) => (
+                  <TableRow key={file.file_id} hover>
+                    <TableCell padding="checkbox">
+                      <Checkbox
+                        checked={selectedFileIds.has(file.file_id)}
+                        onChange={(e) => {
+                          const set = new Set(selectedFileIds);
+                          e.target.checked ? set.add(file.file_id) : set.delete(file.file_id);
+                          setSelectedFileIds(set);
+                        }}
+                        disabled={file.status !== 'completed'}
+                      />
                     </TableCell>
-                  </TableRow>
-                ) : (
-                  allFiles.map((doc) => (
-                    <TableRow key={doc.file_id} hover selected={selectedFileIds.has(doc.file_id)}>
-                      <TableCell padding="checkbox">
-                        <Checkbox
-                          checked={selectedFileIds.has(doc.file_id)}
-                          onChange={(e) => {
-                            const newSet = new Set(selectedFileIds);
-                            if (e.target.checked) newSet.add(doc.file_id);
-                            else newSet.delete(doc.file_id);
-                            setSelectedFileIds(newSet);
-                          }}
-                          disabled={doc.status !== 'completed'}
+                    <TableCell>
+                      <Tooltip title={file.filename}>
+                        <Typography noWrap sx={{ maxWidth: 360 }}>
+                          {file.filename}
+                        </Typography>
+                      </Tooltip>
+                    </TableCell>
+                    <TableCell>{formatDate(file.created_at)}</TableCell>
+                    <TableCell>
+                      <Stack spacing={0.5}>
+                        <Chip
+                          label={getStatusLabel(file.status)}
+                          color={getStatusColor(file.status)}
+                          size="small"
                         />
-                      </TableCell>
-                      <TableCell>
-                        <Tooltip title={doc.filename}>
-                          <Typography noWrap sx={{ maxWidth: 300 }}>
-                            {doc.filename}
-                          </Typography>
-                        </Tooltip>
-                      </TableCell>
-                      <TableCell>{formatDate(doc.created_at)}</TableCell>
-                      <TableCell>
-                        <Stack spacing={1}>
-                          <Chip
-                            label={getStatusText(doc.status)}
-                            color={getStatusColor(doc.status)}
-                            size="small"
-                          />
-                          {doc.source === 'local' && doc.progress < 100 && (
-                            <LinearProgress variant="determinate" value={doc.progress} />
-                          )}
-                          {doc.error && <Typography variant="caption" color="error">{doc.error}</Typography>}
-                        </Stack>
-                      </TableCell>
-                      <TableCell align="center">
-                        <Stack direction="row" spacing={1} justifyContent="center">
-                          <Button
-                            variant="outlined"
-                            size="small"
-                            onClick={() => openChatForFiles([doc.file_id], [doc.filename])}
-                            disabled={doc.status !== 'completed'}
-                          >
-                            Chat
-                          </Button>
-                          {doc.source === 'server' && doc.status === 'completed' && (
+                        {file.status === 'uploading' && <LinearProgress />}
+                      </Stack>
+                    </TableCell>
+                    <TableCell align="center">
+                      <Stack direction="row" spacing={1} justifyContent="center">
+                        {/* Always visible Chat button */}
+                        <Button
+                          size="small"
+                          variant="outlined"
+                          color="primary"
+                          startIcon={<DescriptionIcon />}
+                          onClick={() => openChat([file.file_id], [file.filename])}
+                          disabled={file.status !== 'completed'}
+                        >
+                          {file.status === 'completed' ? 'Chat' : 'Processing...'}
+                        </Button>
+
+                        {/* Download & Delete only when completed */}
+                        {file.status === 'completed' && (
+                          <>
                             <Button
-                              variant="outlined"
                               size="small"
+                              variant="contained"
                               startIcon={<DownloadIcon />}
-                              onClick={() => handleDownloadPdf(doc.file_id, doc.filename)}
+                              onClick={() => downloadSinglePdf(file.file_id, file.filename)}
                             >
                               Download
                             </Button>
-                          )}
-                          {doc.source === 'server' && doc.status === 'completed' && (
                             <IconButton
                               size="small"
                               color="error"
-                              onClick={() => openDeleteDialog([doc.file_id])}
+                              onClick={() => {
+                                setFilesToDelete([file.file_id]);
+                                setDeleteDialogOpen(true);
+                              }}
                             >
-                              <DeleteIcon fontSize="small" />
+                              <DeleteIcon />
                             </IconButton>
-                          )}
-                        </Stack>
-                      </TableCell>
-                    </TableRow>
-                  ))
-                )}
-              </TableBody>
-            </Table>
-          </TableContainer>
-        </Box>
+                          </>
+                        )}
+                      </Stack>
+                    </TableCell>
+                  </TableRow>
+                ))
+              )}
+            </TableBody>
+          </Table>
+        </TableContainer>
 
         <Divider />
 
         {/* Upload Section */}
-        <Typography variant="h6" gutterBottom>
-          Upload Documents (Multiple PDFs Supported)
-        </Typography>
-
-        <Stack direction={{ xs: 'column', sm: 'row' }} spacing={2} sx={{ alignItems: 'center' }}>
+        <Stack spacing={2}>
+          <Typography variant="h6">Upload Documents</Typography>
           <input
             type="file"
             accept="application/pdf"
             multiple
-            onChange={handleFileChange}
-            style={{ display: 'none' }}
-            id="multi-pdf-upload"
-            disabled={isUploading}
+            hidden
+            id="pdf-upload"
+            onChange={(e) => enqueueUploads(e.target.files)}
           />
-          <label htmlFor="multi-pdf-upload">
+          <label htmlFor="pdf-upload">
             <Button
               variant="contained"
               component="span"
               startIcon={<UploadFileIcon />}
               disabled={isUploading}
+              size="large"
             >
               {isUploading ? 'Uploading...' : 'Select PDFs'}
             </Button>
           </label>
-
           {localUploads.length > 0 && (
             <Typography variant="body2" color="text.secondary">
               {localUploads.filter(u => u.status === 'uploading').length} file(s) uploading...
@@ -812,270 +653,216 @@ export default function Digitiser() {
           )}
         </Stack>
 
-        {localUploads.length > 0 && (
-          <Alert severity="info" sx={{ mt: 2 }}>
-            {localUploads.length} file(s) added. They will appear in the table as they process.
-          </Alert>
-        )}
-      </Stack>
-
-      {/* Conversations Drawer */}
-      <Drawer anchor="left" open={drawerOpen} onClose={toggleDrawer}>
-        <Box sx={{ width: 340, p: 3 }}>
-          <Typography variant="h6" gutterBottom>
-            Conversations ({conversations.length})
-          </Typography>
-          <Divider sx={{ mb: 2 }} />
-          <List>
-            {completedCount > 0 && (
-              <ListItem disablePadding>
-                <ListItemButton
-                  onClick={() => {
-                    const completed = allFiles.filter(f => f.status === 'completed');
-                    openChatForFiles(
-                      completed.map(f => f.file_id),
-                      completed.map(f => f.filename),
-                      true
-                    );
-                    setDrawerOpen(false);
-                  }}
-                  sx={{
-                    borderRadius: 2,
-                    mb: 2,
-                    bgcolor: 'primary.main',
-                    color: 'white',
-                    '&:hover': { bgcolor: 'primary.dark' },
-                  }}
-                >
-                  <ListItemAvatar>
-                    <Avatar sx={{ bgcolor: 'white', color: 'primary.main' }}>
-                      <LanguageIcon />
-                    </Avatar>
-                  </ListItemAvatar>
-                  <ListItemText
-                    primary="Global Chat"
-                    secondary={`${completedCount} document${completedCount > 1 ? 's' : ''} • Search everything`}
-                    primaryTypographyProps={{ fontWeight: 'bold' }}
-                    secondaryTypographyProps={{ color: 'white', sx: { opacity: 0.9 } }}
-                  />
-                </ListItemButton>
-              </ListItem>
-            )}
-
-            {conversations.filter(c => !c.isGlobal).length === 0 && completedCount === 0 ? (
-              <Typography color="text.secondary" sx={{ p: 4, textAlign: 'center' }}>
-                No conversations yet.<br />Upload documents and start chatting!
+        {/* Chat Dialog */}
+        <Dialog open={chatOpen} onClose={closeChat} maxWidth="md" fullWidth>
+          <DialogTitle>
+            <Stack direction="row" justifyContent="space-between" alignItems="center">
+              <Typography variant="h6">
+                {currentConvId === GLOBAL_CHAT_ID
+                  ? `Global Chat • ${activeFilenames.length} documents`
+                  : activeFilenames.length === 1
+                    ? activeFilenames[0]
+                    : `${activeFilenames.length} documents`}
               </Typography>
-            ) : (
-              conversations
-                .filter(c => !c.isGlobal)
-                .map(conv => (
-                  <ListItem key={conv.id} disablePadding>
-                    <ListItemButton
-                      onClick={() => {
-                        openChatForFiles(conv.fileIds, conv.filenames);
-                        setDrawerOpen(false);
-                      }}
-                      sx={{
-                        borderRadius: 2,
-                        mb: 1,
-                        bgcolor: 'background.paper',
-                        boxShadow: 1,
-                        '&:hover': { boxShadow: 3 }
-                      }}
-                    >
-                      <ListItemAvatar>
-                        <Avatar sx={{ bgcolor: 'primary.main' }}>
-                          <DescriptionIcon />
-                        </Avatar>
-                      </ListItemAvatar>
-                      <ListItemText
-                        primary={`${conv.filenames.length} document${conv.filenames.length > 1 ? 's' : ''}`}
-                        secondary={
-                          <>
-                            <Typography component="span" variant="body2" color="text.primary" noWrap>
-                              {conv.preview}
-                            </Typography>
-                            <br />
-                            <Typography component="span" variant="caption" color="text.secondary">
-                              {formatRelativeTime(conv.lastUpdated)}
-                            </Typography>
-                          </>
-                        }
-                      />
-                    </ListItemButton>
-                  </ListItem>
-                ))
-            )}
-          </List>
-        </Box>
-      </Drawer>
-
-      {/* Delete Confirmation Dialog */}
-      <Dialog open={deleteDialogOpen} onClose={() => setDeleteDialogOpen(false)}>
-        <DialogTitle>Confirm Deletion</DialogTitle>
-        <DialogContent>
-          <DialogContentText>
-            Are you sure you want to delete {filesToDelete.length} document{filesToDelete.length > 1 ? 's' : ''}?
-            This action cannot be undone.
-          </DialogContentText>
-        </DialogContent>
-        <DialogActions>
-          <Button onClick={() => setDeleteDialogOpen(false)}>Cancel</Button>
-          <Button onClick={handleDeleteFiles} color="error" variant="contained">
-            Delete Permanently
-          </Button>
-        </DialogActions>
-      </Dialog>
-
-      {/* NEW: Clear Chat Confirmation Dialog */}
-      <Dialog open={clearChatDialogOpen} onClose={() => setClearChatDialogOpen(false)}>
-        <DialogTitle>Clear Chat</DialogTitle>
-        <DialogContent>
-          <DialogContentText>
-            Are you sure you want to clear this conversation? This will remove all messages but keep the document context.
-          </DialogContentText>
-        </DialogContent>
-        <DialogActions>
-          <Button onClick={() => setClearChatDialogOpen(false)}>Cancel</Button>
-          <Button onClick={handleClearChat} color="warning" variant="contained">
-            Clear Chat
-          </Button>
-        </DialogActions>
-      </Dialog>
-
-      {/* Chat Dialog */}
-      <Dialog open={chatOpen} onClose={handleCloseChat} maxWidth="md" fullWidth>
-        <DialogTitle>
-          <Stack direction="row" justifyContent="space-between" alignItems="center">
-            <Typography variant="h6">
-              {currentConversationId === GLOBAL_CHAT_ID
-                ? `Global Chat • ${activeChatFilenames.length} documents`
-                : activeChatFilenames.length === 1
-                  ? activeChatFilenames[0]
-                  : `${activeChatFilenames.length} documents`}
-            </Typography>
-            <Stack direction="row" spacing={1}>
-              <Button
-                startIcon={<SearchIcon />}
-                onClick={toggleSearch}
-                variant={showSearchResults ? "contained" : "outlined"}
-                size="small"
-              >
-                {showSearchResults ? 'Close Search' : 'Search'}
-              </Button>
-              {/* NEW: Clear Chat Button */}
               <Button
                 startIcon={<ClearIcon />}
                 onClick={() => setClearChatDialogOpen(true)}
-                color="inherit"
-                size="small"
                 variant="outlined"
+                size="small"
               >
                 Clear
               </Button>
             </Stack>
-          </Stack>
-        </DialogTitle>
+          </DialogTitle>
+          <DialogContent dividers sx={{ height: '70vh', display: 'flex', flexDirection: 'column' }}>
+            <Box flex={1} overflow="auto" p={2} component={Paper} variant="outlined">
+              <List>
+                {chatHistory.map((msg, i) => (
+                  <ListItem key={i} alignItems="flex-start">
+                    <Paper
+                      sx={{
+                        p: 2,
+                        maxWidth: '80%',
+                        bgcolor: msg.role === 'user' ? 'primary.light' : 'grey.100',
+                        color: msg.role === 'user' ? 'white' : 'inherit',
+                      }}
+                    >
+                      <Typography variant="subtitle2" gutterBottom>
+                        {msg.role === 'user' ? 'You' : 'Assistant'}
+                      </Typography>
+                      <Typography whiteSpace="pre-wrap">{msg.content || 'Thinking...'}</Typography>
+                      {msg.sources && msg.sources.length > 0 && (
+                        <Accordion sx={{ mt: 2 }}>
+                          <AccordionSummary expandIcon={<ExpandMoreIcon />}>
+                            <Typography variant="caption">Sources ({msg.sources.length})</Typography>
+                          </AccordionSummary>
+                          <AccordionDetails>
+                            <Stack spacing={1}>
+                              {msg.sources.map((s, idx) => (
+                                <Box key={idx}>
+                                  <Typography variant="caption" color="text.secondary">
+                                    <strong>{s.filename}</strong> (relevance: {s.relevance_score.toFixed(2)})
+                                  </Typography>
+                                  <Paper variant="outlined" sx={{ p: 1, mt: 0.5, bgcolor: 'grey.50' }}>
+                                    <Highlight
+                                      searchWords={userMessage.split(' ').filter(w => w.length > 3)}
+                                      textToHighlight={s.excerpt}
+                                      autoEscape
+                                    />
+                                  </Paper>
+                                </Box>
+                              ))}
+                            </Stack>
+                          </AccordionDetails>
+                        </Accordion>
+                      )}
+                    </Paper>
+                  </ListItem>
+                ))}
+                {chatLoading && (
+                  <ListItem>
+                    <CircularProgress size={24} />
+                    <Typography sx={{ ml: 2 }}>Searching and thinking...</Typography>
+                  </ListItem>
+                )}
+              </List>
+            </Box>
 
-        <DialogContent dividers sx={{ display: 'flex', flexDirection: 'column', height: '70vh' }}>
-          {showSearchResults && activeChatFileIds.length === 1 && (
-            <Paper variant="outlined" sx={{ p: 2, mb: 2, maxHeight: '40vh', overflow: 'auto', bgcolor: 'grey.50' }}>
-              <Typography variant="subtitle1" gutterBottom>Search in document</Typography>
+            {chatError && (
+              <Alert severity="error" onClose={() => setChatError(null)} sx={{ mt: 2 }}>
+                {chatError}
+              </Alert>
+            )}
+
+            <Stack direction="row" spacing={1} mt={2}>
               <TextField
-                fullWidth variant="outlined" placeholder="Search..."
-                value={searchQuery} onChange={e => setSearchQuery(e.target.value)}
-                sx={{ mb: 2 }} autoFocus
+                fullWidth
+                multiline
+                maxRows={5}
+                placeholder="Ask about your documents..."
+                value={userMessage}
+                onChange={(e) => setUserMessage(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter' && !e.shiftKey) {
+                    e.preventDefault();
+                    sendMessage(userMessage);
+                    setUserMessage('');
+                  }
+                }}
+                disabled={chatLoading}
               />
-              {searchQuery.trim() && (
-                <Typography component="div" sx={{ whiteSpace: 'pre-wrap', fontSize: '0.95rem', lineHeight: 1.6 }}>
-                  <Highlight
-                    highlightClassName="search-highlight"
-                    searchWords={[searchQuery.trim()]}
-                    autoEscape
-                    textToHighlight="Full document text search coming soon..."
-                  />
-                </Typography>
-              )}
-            </Paper>
-          )}
+              <Button
+                variant="contained"
+                onClick={() => {
+                  sendMessage(userMessage);
+                  setUserMessage('');
+                }}
+                disabled={chatLoading || !userMessage.trim()}
+                sx={{ height: 56 }}
+              >
+                <SendIcon />
+              </Button>
+            </Stack>
+          </DialogContent>
+          <DialogActions>
+            <Button onClick={closeChat}>Close</Button>
+          </DialogActions>
+        </Dialog>
 
-          <Paper variant="outlined" sx={{ flexGrow: 1, overflow: 'auto', p: 2, mb: 2 }}>
+        {/* Delete Confirmation */}
+        <Dialog open={deleteDialogOpen} onClose={() => setDeleteDialogOpen(false)}>
+          <DialogTitle>Confirm Deletion</DialogTitle>
+          <DialogContent>
+            <DialogContentText>
+              Permanently delete {filesToDelete.length} document{filesToDelete.length > 1 ? 's' : ''}?
+              This cannot be undone.
+            </DialogContentText>
+          </DialogContent>
+          <DialogActions>
+            <Button onClick={() => setDeleteDialogOpen(false)}>Cancel</Button>
+            <Button color="error" variant="contained" onClick={() => {
+              deleteFiles(filesToDelete);
+              setSelectedFileIds(new Set());
+              setDeleteDialogOpen(false);
+            }}>
+              Delete
+            </Button>
+          </DialogActions>
+        </Dialog>
+
+        {/* Clear Chat Confirmation */}
+        <Dialog open={clearChatDialogOpen} onClose={() => setClearChatDialogOpen(false)}>
+          <DialogTitle>Clear Conversation?</DialogTitle>
+          <DialogContent>
+            <DialogContentText>
+              This will reset the chat while keeping the loaded documents.
+            </DialogContentText>
+          </DialogContent>
+          <DialogActions>
+            <Button onClick={() => setClearChatDialogOpen(false)}>Cancel</Button>
+            <Button color="warning" variant="contained" onClick={() => {
+              clearChat();
+              setClearChatDialogOpen(false);
+            }}>
+              Clear Chat
+            </Button>
+          </DialogActions>
+        </Dialog>
+
+        {/* Conversations Drawer */}
+        <Drawer anchor="left" open={drawerOpen} onClose={() => setDrawerOpen(false)}>
+          <Box sx={{ width: 340, p: 3 }}>
+            <Typography variant="h6" gutterBottom>
+              Conversations ({conversations.length})
+            </Typography>
+            <Divider sx={{ mb: 2 }} />
             <List>
-              {chatHistory.filter(m => m.role !== 'system').map((msg, i) => (
-                <ListItem key={i} sx={{ justifyContent: msg.role === 'user' ? 'flex-end' : 'flex-start' }}>
-                  <Paper elevation={1} sx={{
-                    p: 2,
-                    maxWidth: '85%',
-                    bgcolor: msg.role === 'user' ? 'primary.light' : 'grey.100',
-                    color: msg.role === 'user' ? 'white' : 'text.primary'
-                  }}>
-                    <Typography variant="subtitle2" fontWeight="bold" gutterBottom>
-                      {msg.role === 'user' ? 'You' : 'Assistant'}
-                    </Typography>
-                    <Typography whiteSpace="pre-wrap" sx={{ mb: msg.sources && msg.sources.length > 0 ? 2 : 0 }}>
-                      {msg.content || <i>Thinking...</i>}
-                    </Typography>
-                    {msg.sources && msg.sources.length > 0 && (
-                      <Accordion elevation={0} sx={{ bgcolor: 'transparent', mt: 1 }}>
-                        <AccordionSummary expandIcon={<ExpandMoreIcon />} sx={{ fontSize: '0.875rem' }}>
-                          <Typography variant="caption" fontWeight="medium">
-                            Sources ({msg.sources.length})
-                          </Typography>
-                        </AccordionSummary>
-                        <AccordionDetails sx={{ pt: 0 }}>
-                          <Stack spacing={2}>
-                            {msg.sources.map((source, idx) => (
-                              <Box key={idx} sx={{ fontSize: '0.875rem' }}>
-                                <Typography variant="caption" color="text.secondary" gutterBottom>
-                                  <strong>{source.filename}</strong> (relevance: {source.relevance_score.toFixed(2)})
-                                </Typography>
-                                <Paper variant="outlined" sx={{ p: 1.5, bgcolor: 'grey.50', mt: 0.5 }}>
-                                  <Highlight
-                                    highlightClassName="source-highlight"
-                                    searchWords={userMessage.split(' ').filter(w => w.length > 3)}
-                                    textToHighlight={source.excerpt}
-                                    autoEscape={true}
-                                  />
-                                </Paper>
-                              </Box>
-                            ))}
-                          </Stack>
-                        </AccordionDetails>
-                      </Accordion>
-                    )}
-                  </Paper>
+              {conversations.filter(c => c.isGlobal).length > 0 && (
+                <ListItem disablePadding>
+                  <ListItemButton
+                    onClick={() => {
+                      const comp = allFiles.filter(f => f.status === 'completed');
+                      openChat(comp.map(f => f.file_id), comp.map(f => f.filename), true);
+                      setDrawerOpen(false);
+                    }}
+                    sx={{ borderRadius: 2, bgcolor: 'primary.main', color: 'white', mb: 2 }}
+                  >
+                    <ListItemAvatar>
+                      <Avatar sx={{ bgcolor: 'white', color: 'primary.main' }}>
+                        <LanguageIcon />
+                      </Avatar>
+                    </ListItemAvatar>
+                    <ListItemText
+                      primary="Global Chat"
+                      secondary={`${completedFiles.length} documents`}
+                      primaryTypographyProps={{ fontWeight: 'bold' }}
+                    />
+                  </ListItemButton>
+                </ListItem>
+              )}
+              {conversations.filter(c => !c.isGlobal).map((conv) => (
+                <ListItem key={conv.id} disablePadding>
+                  <ListItemButton
+                    onClick={() => {
+                      openChat(conv.fileIds, conv.filenames);
+                      setDrawerOpen(false);
+                    }}
+                    sx={{ borderRadius: 2, mb: 1 }}
+                  >
+                    <ListItemAvatar>
+                      <Avatar><DescriptionIcon /></Avatar>
+                    </ListItemAvatar>
+                    <ListItemText
+                      primary={`${conv.filenames.length} document${conv.filenames.length > 1 ? 's' : ''}`}
+                      secondary={conv.preview}
+                    />
+                  </ListItemButton>
                 </ListItem>
               ))}
-              {chatLoading && (
-                <ListItem>
-                  <CircularProgress size={24} />
-                  <Typography sx={{ ml: 2 }}>Searching documents and thinking...</Typography>
-                </ListItem>
-              )}
             </List>
-          </Paper>
-
-          {chatError && <Alert severity="error" onClose={() => setChatError(null)} sx={{ mb: 2 }}>{chatError}</Alert>}
-
-          <Stack direction="row" spacing={1} alignItems="flex-end">
-            <TextField
-              fullWidth multiline maxRows={4} variant="outlined"
-              placeholder="Ask a question about the document(s)..."
-              value={userMessage} onChange={e => setUserMessage(e.target.value)}
-              onKeyDown={e => e.key === 'Enter' && !e.shiftKey && (e.preventDefault(), handleSendMessage())}
-              disabled={chatLoading}
-            />
-            <Button variant="contained" onClick={handleSendMessage} disabled={!userMessage.trim() || chatLoading} sx={{ height: 56 }}>
-              <SendIcon />
-            </Button>
-          </Stack>
-        </DialogContent>
-
-        <DialogActions>
-          <Button onClick={handleCloseChat}>Close</Button>
-        </DialogActions>
-      </Dialog>
+          </Box>
+        </Drawer>
+      </Stack>
     </Box>
   );
 }
