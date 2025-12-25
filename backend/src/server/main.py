@@ -59,15 +59,19 @@ FONT_PATH = os.path.join(os.path.dirname(__file__), "fonts", "DejaVuSans.ttf")
 if not os.path.exists(FONT_PATH):
     logger.warning("DejaVuSans.ttf not found – PDF regeneration will fail until added.")
 
-# ========================= GLOBAL CONFIGURABLE TOKEN LIMITS =========================
+# ========================= CONFIGURABLE TOKEN LIMITS (ENV VARS) =========================
 
-# Maximum tokens allowed for retrieved context (safe buffer below model context window)
-# Current model (gemma3): 16384 tokens → safe context ~12k
-# Increase this when switching to larger context models (e.g., 32k, 128k)
-MAX_CONTEXT_TOKENS = 12000
+# Maximum tokens allowed for retrieved context
+# Can be overridden via environment variable: MAX_CONTEXT_TOKENS
+# Default: 12000 (safe for gemma3 16k context)
+MAX_CONTEXT_TOKENS = int(os.getenv("MAX_CONTEXT_TOKENS", "12000"))
 
 # Maximum tokens reserved for recent chat history
-MAX_HISTORY_TOKENS = 3000
+# Can be overridden via environment variable: MAX_HISTORY_TOKENS
+# Default: 3000
+MAX_HISTORY_TOKENS = int(os.getenv("MAX_HISTORY_TOKENS", "3000"))
+
+logger.info(f"Context limits configured: MAX_CONTEXT_TOKENS={MAX_CONTEXT_TOKENS}, MAX_HISTORY_TOKENS={MAX_HISTORY_TOKENS}")
 
 # ========================= FASTAPI APP =========================
 
