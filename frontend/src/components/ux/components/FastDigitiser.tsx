@@ -41,6 +41,7 @@ import DescriptionIcon from '@mui/icons-material/Description';
 import UploadFileIcon from '@mui/icons-material/UploadFile';
 import PictureAsPdfIcon from '@mui/icons-material/PictureAsPdf';
 import DeleteIcon from '@mui/icons-material/Delete';
+import LanguageIcon from '@mui/icons-material/Language';
 
 import Highlight from 'react-highlight-words';
 
@@ -78,9 +79,11 @@ interface Conversation {
   messages: Message[];
   lastUpdated: number;
   preview: string;
+  isGlobal?: boolean;
 }
 
 const STORAGE_KEY = 'dwani_conversations';
+const GLOBAL_CHAT_ID = 'global-all-documents';
 
 export default function Digitiser() {
   const [chatOpen, setChatOpen] = useState(false);
@@ -259,7 +262,6 @@ export default function Digitiser() {
           : u
       ));
     } finally {
-      // Remove from localUploads after a short delay (deduplication will hide it anyway if server has it)
       setTimeout(() => {
         setLocalUploads(prev => prev.filter(u => u !== current));
         uploadNextFile(remaining);
@@ -375,10 +377,10 @@ export default function Digitiser() {
 
   const getConversationId = (fileIds: string[]) => fileIds.sort().join('|');
 
-  const openChatForFiles = (fileIds: string[], filenames: string[]) => {
+  const openChatForFiles = (fileIds: string[], filenames: string[], isGlobal = false) => {
     if (fileIds.length === 0) return;
 
-    const convId = getConversationId(fileIds);
+    const convId = isGlobal ? GLOBAL_CHAT_ID : getConversationId(fileIds);
     const existing = conversations.find(c => c.id === convId);
 
     setActiveChatFileIds(fileIds);
@@ -391,7 +393,9 @@ export default function Digitiser() {
     } else {
       const welcomeMsg: Message = {
         role: 'assistant',
-        content: `I've loaded ${fileIds.length} document${fileIds.length > 1 ? 's' : ''}: ${filenames.join(', ')}.\n\nAsk me anything — I'll search across all of them!`
+        content: isGlobal
+          ? `**Global Chat** loaded with **${fileIds.length} completed document${fileIds.length > 1 ? 's' : ''}**.\n\nAsk anything — I'll search across your entire library!`
+          : `I've loaded ${fileIds.length} document${fileIds.length > 1 ? 's' : ''}: ${filenames.join(', ')}.\n\nAsk me anything — I'll search across all of them!`
       };
       setChatHistory([welcomeMsg]);
 
@@ -401,15 +405,26 @@ export default function Digitiser() {
         filenames,
         messages: [welcomeMsg],
         lastUpdated: Date.now(),
-        preview: welcomeMsg.content.slice(0, 60) + '...'
+        preview: welcomeMsg.content.slice(0, 60) + '...',
+        isGlobal
       };
-      setConversations(prev => [newConv, ...prev]);
+      setConversations(prev => [newConv, ...prev.filter(c => c.id !== convId)]);
     }
     setChatOpen(true);
   };
 
   const saveCurrentConversation = () => {
     if (!currentConversationId || activeChatFileIds.length === 0) return;
+
+    const isGlobal = currentConversationId === GLOBAL_CHAT_ID;
+
+    const currentFileIds = isGlobal
+      ? allFiles.filter(f => f.status === 'completed').map(f => f.file_id)
+      : activeChatFileIds;
+
+    const currentFilenames = isGlobal
+      ? allFiles.filter(f => f.status === 'completed').map(f => f.filename)
+      : activeChatFilenames;
 
     setConversations(prev => {
       const filtered = prev.filter(c => c.id !== currentConversationId);
@@ -418,11 +433,12 @@ export default function Digitiser() {
 
       const updatedConv: Conversation = {
         id: currentConversationId,
-        fileIds: activeChatFileIds,
-        filenames: activeChatFilenames,
+        fileIds: currentFileIds,
+        filenames: currentFilenames,
         messages: chatHistory,
         lastUpdated: Date.now(),
-        preview
+        preview,
+        isGlobal
       };
       return [updatedConv, ...filtered];
     });
@@ -490,7 +506,7 @@ export default function Digitiser() {
     }
   };
 
-  // === FIXED: Combined files list with deduplication to prevent duplicates ===
+  // === Combined files list with deduplication ===
   const serverFileIds = new Set(uploadedFiles.map(f => f.file_id));
 
   const serverDocs = uploadedFiles.map(f => ({
@@ -501,7 +517,7 @@ export default function Digitiser() {
   }));
 
   const localDocs = localUploads
-    .filter(u => !u.file_id || !serverFileIds.has(u.file_id)) // Hide local entry if server already knows it
+    .filter(u => !u.file_id || !serverFileIds.has(u.file_id))
     .map((u, index) => ({
       file_id: u.file_id || `local-${u.file.name}-${u.file.size}-${u.file.lastModified}-${index}`,
       filename: u.file.name,
@@ -515,6 +531,7 @@ export default function Digitiser() {
   const allFiles = [...serverDocs, ...localDocs]
     .sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime());
 
+  const completedCount = allFiles.filter(f => f.status === 'completed').length;
   const selectedCompletedCount = allFiles.filter(f => 
     selectedFileIds.has(f.file_id) && f.status === 'completed'
   ).length;
@@ -590,11 +607,36 @@ export default function Digitiser() {
           </Alert>
         )}
 
-        {/* Documents Table */}
-        <Box>
-          <Typography variant="h6" gutterBottom>
+        {/* Documents Header with Global Chat Button */}
+        <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 2 }}>
+          <Typography variant="h6">
             Your Documents ({allFiles.length})
           </Typography>
+
+          <Tooltip title={completedCount === 0 ? "Waiting for documents to finish processing" : "Chat with all completed documents"}>
+            <span>
+              <Button
+                variant="contained"
+                color="primary"
+                startIcon={<LanguageIcon />}
+                onClick={() => {
+                  const completed = allFiles.filter(f => f.status === 'completed');
+                  openChatForFiles(
+                    completed.map(f => f.file_id),
+                    completed.map(f => f.filename),
+                    true
+                  );
+                }}
+                disabled={completedCount === 0}
+              >
+                Global Chat ({completedCount})
+              </Button>
+            </span>
+          </Tooltip>
+        </Box>
+
+        {/* Documents Table */}
+        <Box>
           <TableContainer component={Paper} elevation={2} sx={{ maxHeight: 500, overflow: 'auto', borderRadius: 2 }}>
             <Table stickyHeader>
               <TableHead>
@@ -728,48 +770,86 @@ export default function Digitiser() {
           </Typography>
           <Divider sx={{ mb: 2 }} />
           <List>
-            {conversations.length === 0 ? (
+            {/* Global Chat - Always at top if documents exist */}
+            {completedCount > 0 && (
+              <ListItem
+                button
+                onClick={() => {
+                  const completed = allFiles.filter(f => f.status === 'completed');
+                  openChatForFiles(
+                    completed.map(f => f.file_id),
+                    completed.map(f => f.filename),
+                    true
+                  );
+                  setDrawerOpen(false);
+                }}
+                sx={{
+                  borderRadius: 2,
+                  mb: 2,
+                  bgcolor: 'primary.main',
+                  color: 'white',
+                  '&:hover': { bgcolor: 'primary.dark' },
+                }}
+              >
+                <ListItemAvatar>
+                  <Avatar sx={{ bgcolor: 'white', color: 'primary.main' }}>
+                    <LanguageIcon />
+                  </Avatar>
+                </ListItemAvatar>
+                <ListItemText
+                  primary="Global Chat"
+                  secondary={`${completedCount} document${completedCount > 1 ? 's' : ''} • Search everything`}
+                  primaryTypographyProps={{ fontWeight: 'bold' }}
+                  secondaryTypographyProps={{ color: 'white', opacity: 0.9 }}
+                />
+              </ListItem>
+            )}
+
+            {/* Regular conversations */}
+            {conversations.filter(c => !c.isGlobal).length === 0 && completedCount === 0 ? (
               <Typography color="text.secondary" sx={{ p: 4, textAlign: 'center' }}>
                 No conversations yet.<br />Upload documents and start chatting!
               </Typography>
             ) : (
-              conversations.map(conv => (
-                <ListItem
-                  button
-                  key={conv.id}
-                  onClick={() => {
-                    openChatForFiles(conv.fileIds, conv.filenames);
-                    setDrawerOpen(false);
-                  }}
-                  sx={{
-                    borderRadius: 2,
-                    mb: 1,
-                    bgcolor: 'background.paper',
-                    boxShadow: 1,
-                    '&:hover': { boxShadow: 3 }
-                  }}
-                >
-                  <ListItemAvatar>
-                    <Avatar sx={{ bgcolor: 'primary.main' }}>
-                      <DescriptionIcon />
-                    </Avatar>
-                  </ListItemAvatar>
-                  <ListItemText
-                    primary={`${conv.filenames.length} document${conv.filenames.length > 1 ? 's' : ''}`}
-                    secondary={
-                      <>
-                        <Typography component="span" variant="body2" color="text.primary" noWrap>
-                          {conv.preview}
-                        </Typography>
-                        <br />
-                        <Typography component="span" variant="caption" color="text.secondary">
-                          {formatRelativeTime(conv.lastUpdated)}
-                        </Typography>
-                      </>
-                    }
-                  />
-                </ListItem>
-              ))
+              conversations
+                .filter(c => !c.isGlobal)
+                .map(conv => (
+                  <ListItem
+                    button
+                    key={conv.id}
+                    onClick={() => {
+                      openChatForFiles(conv.fileIds, conv.filenames);
+                      setDrawerOpen(false);
+                    }}
+                    sx={{
+                      borderRadius: 2,
+                      mb: 1,
+                      bgcolor: 'background.paper',
+                      boxShadow: 1,
+                      '&:hover': { boxShadow: 3 }
+                    }}
+                  >
+                    <ListItemAvatar>
+                      <Avatar sx={{ bgcolor: 'primary.main' }}>
+                        <DescriptionIcon />
+                      </Avatar>
+                    </ListItemAvatar>
+                    <ListItemText
+                      primary={`${conv.filenames.length} document${conv.filenames.length > 1 ? 's' : ''}`}
+                      secondary={
+                        <>
+                          <Typography component="span" variant="body2" color="text.primary" noWrap>
+                            {conv.preview}
+                          </Typography>
+                          <br />
+                          <Typography component="span" variant="caption" color="text.secondary">
+                            {formatRelativeTime(conv.lastUpdated)}
+                          </Typography>
+                        </>
+                      }
+                    />
+                  </ListItem>
+                ))
             )}
           </List>
         </Box>
@@ -797,7 +877,9 @@ export default function Digitiser() {
         <DialogTitle>
           <Stack direction="row" justifyContent="space-between" alignItems="center">
             <Typography variant="h6">
-              Chat with {activeChatFilenames.length === 1
+              {currentConversationId === GLOBAL_CHAT_ID
+                ? `Global Chat • ${activeChatFilenames.length} documents`
+                : activeChatFilenames.length === 1
                 ? activeChatFilenames[0]
                 : `${activeChatFilenames.length} documents`}
             </Typography>
