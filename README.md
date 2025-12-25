@@ -15,5 +15,13 @@ for VLM
 
 To run locally
     - update the environment with your local vllm/llama-cpp IP/port 
-        - DWANI_API_BASE_URL  
-    - docker compose -f docker-compose.yml up -d
+         
+```
+    export DWANI_API_BASE_URL=vllm/llama.cpp/IP
+```  
+    
+- Run Docker 
+
+```
+    docker compose -f docker-compose.yml up -d
+```
