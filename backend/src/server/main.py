@@ -6,24 +6,15 @@ import logging
 import logging.config
 import os
 import uuid
+import unicodedata
+import re
+import hashlib
 from datetime import datetime
 from io import BytesIO
 from typing import List, Optional
 
 import chromadb
 from chromadb.utils import embedding_functions
-from typing import List
-import hashlib
-
-# Initialize Chroma (persistent on disk)
-chroma_client = chromadb.PersistentClient(path="./chroma_db")
-collection = chroma_client.get_or_create_collection(name="documents")
-
-# Use a lightweight open-source embedding model
-embedding_function = embedding_functions.SentenceTransformerEmbeddingFunction(
-    model_name="all-MiniLM-L6-v2"  # Fast, good quality, runs locally
-)
-
 
 from fastapi import (
     FastAPI,
@@ -35,7 +26,8 @@ from fastapi import (
     Body,
 )
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse, JSONResponse
+from fastapi.responses import StreamingResponse
+
 from pydantic import BaseModel
 
 import uvicorn
@@ -97,15 +89,22 @@ app.add_middleware(
         "http://localhost:5173",
         "http://127.0.0.1:5173",
     ],
-    allow_credentials=False,  # Keep False if not using cookies/auth
-    allow_methods=["GET", "POST", "OPTIONS", "DELETE"],  # Explicit > *
+    allow_credentials=False,
+    allow_methods=["GET", "POST", "OPTIONS", "DELETE"],
     allow_headers=["X-API-KEY", "Content-Type", "Accept"],
     max_age=600,
 )
 
+# -------------------------- Chroma Setup --------------------------
+chroma_client = chromadb.PersistentClient(path="./chroma_db")
+collection = chroma_client.get_or_create_collection(name="documents")
+
+embedding_function = embedding_functions.SentenceTransformerEmbeddingFunction(
+    model_name="all-MiniLM-L6-v2"
+)
+
 # -------------------------- Database Models --------------------------
 from sqlalchemy import create_engine, Column, String, Text, DateTime
-from sqlalchemy.dialects.sqlite import DATETIME
 from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy.orm import sessionmaker, Session
 
@@ -128,7 +127,7 @@ class FileRecord(Base):
     id = Column(String, primary_key=True, index=True)
     filename = Column(String, index=True)
     content_type = Column(String)
-    status = Column(String, default=FileStatus.PENDING)  # Using String for simplicity
+    status = Column(String, default=FileStatus.PENDING)
     extracted_text = Column(Text, nullable=True)
     error_message = Column(Text, nullable=True)
     created_at = Column(DateTime, default=datetime.utcnow)
@@ -146,8 +145,7 @@ def get_db() -> Session:
         db.close()
 
 
-def chunk_text(text: str, chunk_size: int = 1000, overlap: int = 200) -> List[str]:
-    """Split text into overlapping chunks suitable for embedding."""
+def chunk_text(text: str, chunk_size: int = 800, overlap: int = 100) -> List[str]:
     words = text.split()
     chunks = []
     i = 0
@@ -184,6 +182,20 @@ class FileRetrieveResponse(BaseModel):
     updated_at: datetime
 
 
+class ChatMessage(BaseModel):
+    role: str
+    content: str
+
+
+class MultiChatRequest(BaseModel):
+    file_ids: List[str]
+    messages: List[ChatMessage]
+
+
+class MergePdfRequest(BaseModel):
+    file_ids: List[str]
+
+
 # -------------------------- Helper Functions --------------------------
 def encode_image(image_io: BytesIO) -> str:
     return base64.b64encode(image_io.getvalue()).decode("utf-8")
@@ -208,6 +220,11 @@ async def render_pdf_to_images(pdf_bytes: bytes) -> List[Image.Image]:
     except Exception as e:
         logger.error(f"PDF to image conversion failed: {str(e)}")
         raise HTTPException(status_code=500, detail="Failed to process PDF pages")
+
+
+def clean_text(text: str) -> str:
+    """Remove control characters that can cause rendering issues."""
+    return ''.join(ch for ch in text if unicodedata.category(ch)[0] != 'C' or ch in '\n\r\t')
 
 
 # -------------------------- Background Task: Extraction + Storage --------------------------
@@ -262,11 +279,10 @@ async def extract_and_store(file_id: str, pdf_bytes: bytes, filename: str, db: S
         db_file.extracted_text = cleaned_text
         db_file.status = FileStatus.COMPLETED
 
-        # === NEW: Create and store embeddings ===
-        chunks = chunk_text(cleaned_text, chunk_size=800, overlap=100)
+        # Create and store embeddings
+        chunks = chunk_text(cleaned_text)
         chunk_ids = [hashlib.md5(f"{file_id}_{j}".encode()).hexdigest() for j in range(len(chunks))]
 
-        # Delete old embeddings for this file if reprocessing
         collection.delete(where={"file_id": file_id})
 
         collection.add(
@@ -290,7 +306,6 @@ async def extract_and_store(file_id: str, pdf_bytes: bytes, filename: str, db: S
 
 # -------------------------- Endpoints --------------------------
 
-# Legacy endpoint (kept for compatibility)
 @app.post("/app-extract-text", response_model=ExtractionResponse, tags=["Legacy"])
 async def extract_text_endpoint(file: UploadFile = File(...)):
     if not file.filename.lower().endswith(".pdf") or file.content_type != "application/pdf":
@@ -330,8 +345,6 @@ async def extract_text_endpoint(file: UploadFile = File(...)):
         page_count=len(images),
     )
 
-
-# New Files API
 
 @app.post("/files/upload", response_model=FileUploadResponse, tags=["Files"])
 async def upload_file(
@@ -383,23 +396,6 @@ def get_file_status(file_id: str, db: Session = Depends(get_db)):
         updated_at=record.updated_at,
     )
 
-import unicodedata
-import re
-from fastapi.responses import StreamingResponse
-
-
-def clean_text(text: str) -> str:
-    """Remove control characters that can cause rendering issues."""
-    return ''.join(ch for ch in text if unicodedata.category(ch)[0] != 'C' or ch in '\n\r\t')
-
-
-def insert_soft_hyphens(text: str, max_chars: int = 30) -> str:
-    """Prevent long unbreakable strings from crashing PDF generation."""
-    def replace(match):
-        seq = match.group(0)
-        return '\u00ad'.join([seq[i:i + max_chars] for i in range(0, len(seq), max_chars)])
-    return re.sub(r'\S{' + str(max_chars + 1) + r'}', replace, text)
-
 
 @app.get("/files/{file_id}/pdf", tags=["Files"])
 def download_regenerated_pdf(file_id: str, db: Session = Depends(get_db)):
@@ -410,7 +406,6 @@ def download_regenerated_pdf(file_id: str, db: Session = Depends(get_db)):
     if record.status != FileStatus.COMPLETED or not record.extracted_text:
         raise HTTPException(status_code=400, detail="Text extraction not complete or failed")
 
-    # Generate PDF in memory
     pdf = FPDF(format='A4')
     pdf.add_page()
     pdf.set_auto_page_break(auto=True, margin=20)
@@ -423,17 +418,11 @@ def download_regenerated_pdf(file_id: str, db: Session = Depends(get_db)):
     pdf.add_font(fname=font_path, uni=True)
     pdf.set_font("DejaVuSans", size=11)
 
-    # Prepare text
     text = clean_text(record.extracted_text)
-    text = insert_soft_hyphens(text, max_chars=30)
-
-    # Write flowing text (safest method)
     pdf.write(h=7, txt=text)
 
-    # Get bytes
-    pdf_bytes = pdf.output()  # Returns bytes in fpdf2
+    pdf_bytes = pdf.output()
 
-    # === CRITICAL FIX: Use StreamingResponse, NOT FileResponse ===
     return StreamingResponse(
         BytesIO(pdf_bytes),
         media_type="application/pdf",
@@ -442,34 +431,64 @@ def download_regenerated_pdf(file_id: str, db: Session = Depends(get_db)):
         }
     )
 
+# Add these query parameters
 @app.get("/files/", tags=["Files"])
-def list_files(db: Session = Depends(get_db), limit: int = 20):
-    files = db.query(FileRecord).order_by(FileRecord.created_at.desc()).limit(limit).all()
-    return [
-        {
-            "file_id": f.id,
-            "filename": f.filename,
-            "status": f.status,
-            "created_at": f.created_at.isoformat(),
-        }
-        for f in files
-    ]
+def list_files(
+    db: Session = Depends(get_db),
+    page: int = 1,          # New: current page
+    page_size: int = 25,    # New: items per page
+    sort_by: str = "created_at",  # New: sort field
+    sort_order: str = "desc"      # New: asc or desc
+):
+    if page < 1:
+        page = 1
+    if page_size < 1:
+        page_size = 25
+    if page_size > 100:
+        page_size = 100  # limit max
 
+    valid_sort_fields = ["filename", "created_at", "status"]
+    if sort_by not in valid_sort_fields:
+        sort_by = "created_at"
 
-class ChatMessage(BaseModel):
-    role: str
-    content: str
+    order = FileRecord.created_at.desc() if sort_order == "desc" else FileRecord.created_at.asc()
+    if sort_by == "filename":
+        order = FileRecord.filename.desc() if sort_order == "desc" else FileRecord.filename.asc()
+    elif sort_by == "status":
+        order = FileRecord.status.desc() if sort_order == "desc" else FileRecord.status.asc()
 
-class MultiChatRequest(BaseModel):
-    file_ids: List[str]  # Changed from single file_id to list
-    messages: List[ChatMessage]
+    offset = (page - 1) * page_size
+
+    files = db.query(FileRecord)\
+        .order_by(order)\
+        .offset(offset)\
+        .limit(page_size)\
+        .all()
+
+    total = db.query(FileRecord).count()
+
+    return {
+        "files": [
+            {
+                "file_id": f.id,
+                "filename": f.filename,
+                "status": f.status,
+                "created_at": f.created_at.isoformat(),
+            }
+            for f in files
+        ],
+        "total": total,
+        "page": page,
+        "page_size": page_size,
+        "total_pages": (total + page_size - 1) // page_size
+    }
+
 
 @app.post("/chat-with-document", tags=["Files"])
 async def chat_with_document(request: MultiChatRequest, db: Session = Depends(get_db)):
     if not request.file_ids:
         raise HTTPException(status_code=400, detail="At least one file_id required")
 
-    # Validate all files exist and are completed
     records = db.query(FileRecord).filter(FileRecord.id.in_(request.file_ids)).all()
     if len(records) != len(request.file_ids):
         raise HTTPException(status_code=404, detail="One or more files not found")
@@ -478,33 +497,45 @@ async def chat_with_document(request: MultiChatRequest, db: Session = Depends(ge
         if record.status != FileStatus.COMPLETED:
             raise HTTPException(status_code=400, detail=f"Document {record.filename} is not ready")
 
-    # Get user's latest question
     user_messages = [m for m in request.messages if m.role == "user"]
     if not user_messages:
-        raise HTTPException(status_code=400, detail="No user question provided")
+        raise HTTPException(status_code=400, detail="No user question")
     question = user_messages[-1].content
 
-    # Retrieve relevant chunks from ALL selected files
     query_embedding = embedding_function([question])
     results = collection.query(
         query_embeddings=query_embedding,
-        n_results=8,  # Increase slightly since searching multiple docs
-        where={"file_id": {"$in": request.file_ids}}  # Chroma supports $in
+        n_results=6,
+        where={"file_id": {"$in": request.file_ids}},
+        include=["documents", "metadatas", "distances"]
     )
 
     relevant_chunks = results['documents'][0] if results['documents'] else []
-    context = "\n\n".join(relevant_chunks)
+    metadatas = results['metadatas'][0] if results['metadatas'] else []
+    distances = results['distances'][0] if results['distances'] else []
 
-    if not context.strip():
-        context = "No relevant information found in the selected documents."
+    context_parts = []
+    sources = []
+    for i, (chunk, meta) in enumerate(zip(relevant_chunks, metadatas)):
+        if distances[i] > 0.6:
+            continue
+        context_parts.append(chunk)
+        filename = next(r.filename for r in records if r.id == meta['file_id'])
+        sources.append({
+            "filename": filename,
+            "excerpt": chunk.strip(),
+            "relevance_score": round(1 - distances[i], 3)
+        })
 
-    system_prompt = f"""You are an expert assistant answering based ONLY on the provided document excerpts from multiple files.
-Do not use external knowledge. If the answer isn't in the context, say "I don't know".
+    context = "\n\n".join(context_parts) if context_parts else "No highly relevant content found."
 
-Context from selected documents:
+    system_prompt = f"""You are an expert assistant. Answer based ONLY on the provided document excerpts.
+If the question cannot be answered from the context, say "I don't know".
+
+Context:
 {context}
 
-Answer accurately and cite the source filename if possible."""
+Answer clearly and cite sources naturally where relevant."""
 
     full_messages = [
         {"role": "system", "content": system_prompt},
@@ -523,22 +554,88 @@ Answer accurately and cite the source filename if possible."""
         )
         answer = response.choices[0].message.content.strip()
 
-        # Count how many unique files contributed
-        source_file_ids = set(meta['file_id'] for meta in results['metadatas'][0]) if results['metadatas'] else set()
-        filenames = [r.filename for r in records if r.id in source_file_ids]
-
-        sources_info = f" (from {len(source_file_ids)} document{'' if len(source_file_ids)==1 else 's'})"
-        if len(filenames) <= 3:
-            sources_info = f" (from: {', '.join(filenames)})"
+        sources.sort(key=lambda x: x['relevance_score'], reverse=True)
 
         return {
-            "answer": answer + sources_info,
-            "sources": len(relevant_chunks)
+            "answer": answer,
+            "sources": sources
         }
     except Exception as e:
-        logger.error(f"Multi-chat failed: {e}")
+        logger.error(f"Chat failed: {e}")
         raise HTTPException(status_code=500, detail="Failed to generate response")
-    
+
+
+from fastapi.responses import StreamingResponse
+from io import BytesIO
+import os
+import unicodedata
+
+@app.post("/files/merge-pdf", tags=["Files"])
+async def merge_pdf(request: MergePdfRequest = Body(...), db: Session = Depends(get_db)):
+    if len(request.file_ids) == 0:
+        raise HTTPException(status_code=400, detail="At least one file_id required")
+
+    records = db.query(FileRecord).filter(FileRecord.id.in_(request.file_ids)).all()
+    if len(records) != len(request.file_ids):
+        raise HTTPException(status_code=404, detail="One or more files not found")
+
+    for record in records:
+        if record.status != FileStatus.COMPLETED or not record.extracted_text:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Document '{record.filename}' is not ready (status: {record.status})"
+            )
+
+    # Generate PDF
+    pdf = FPDF(format='A4')
+    pdf.set_auto_page_break(auto=True, margin=15)
+    pdf.set_margins(15, 15, 15)
+
+    font_path = os.path.join(os.path.dirname(__file__), "fonts", "DejaVuSans.ttf")
+    if not os.path.exists(font_path):
+        raise HTTPException(status_code=500, detail="Font file DejaVuSans.ttf not found on server")
+
+    pdf.add_font(fname=font_path, uni=True)
+    pdf.set_font("DejaVuSans", size=11)
+
+    for record in records:
+        pdf.add_page()
+        cleaned_text = ''.join(
+            ch for ch in record.extracted_text 
+            if unicodedata.category(ch)[0] != 'C' or ch in '\n\r\t'
+        )
+        pdf.multi_cell(0, 7, cleaned_text)
+
+    pdf_bytes = pdf.output()
+
+    # Smart filename
+    if len(records) == 1:
+        base_name = records[0].filename.rsplit('.', 1)[0]
+        filename = f"clean_{base_name}.pdf"
+    else:
+        filename = f"merged_clean_{len(records)}_documents.pdf"
+
+    return StreamingResponse(
+        BytesIO(pdf_bytes),
+        media_type="application/pdf",
+        headers={
+            "Content-Disposition": f'attachment; filename="{filename}"'
+        }
+    )
+
+
+@app.delete("/files/{file_id}", tags=["Files"])
+def delete_file(file_id: str, db: Session = Depends(get_db)):
+    record = db.query(FileRecord).filter(FileRecord.id == file_id).first()
+    if not record:
+        raise HTTPException(status_code=404, detail="File not found")
+
+    collection.delete(where={"file_id": file_id})
+
+    db.delete(record)
+    db.commit()
+
+    return {"message": "File deleted successfully"}
 
 
 # -------------------------- Run Server --------------------------
