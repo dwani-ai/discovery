@@ -116,3 +116,4 @@ Let me know which one(s) you'd like to tackle next — I’ll give you the compl
 - file generate option -  done
 - chat with all documents -  done
 
+- add file filters 

@@ -431,19 +431,57 @@ def download_regenerated_pdf(file_id: str, db: Session = Depends(get_db)):
         }
     )
 
-
+# Add these query parameters
 @app.get("/files/", tags=["Files"])
-def list_files(db: Session = Depends(get_db), limit: int = 20):
-    files = db.query(FileRecord).order_by(FileRecord.created_at.desc()).limit(limit).all()
-    return [
-        {
-            "file_id": f.id,
-            "filename": f.filename,
-            "status": f.status,
-            "created_at": f.created_at.isoformat(),
-        }
-        for f in files
-    ]
+def list_files(
+    db: Session = Depends(get_db),
+    page: int = 1,          # New: current page
+    page_size: int = 25,    # New: items per page
+    sort_by: str = "created_at",  # New: sort field
+    sort_order: str = "desc"      # New: asc or desc
+):
+    if page < 1:
+        page = 1
+    if page_size < 1:
+        page_size = 25
+    if page_size > 100:
+        page_size = 100  # limit max
+
+    valid_sort_fields = ["filename", "created_at", "status"]
+    if sort_by not in valid_sort_fields:
+        sort_by = "created_at"
+
+    order = FileRecord.created_at.desc() if sort_order == "desc" else FileRecord.created_at.asc()
+    if sort_by == "filename":
+        order = FileRecord.filename.desc() if sort_order == "desc" else FileRecord.filename.asc()
+    elif sort_by == "status":
+        order = FileRecord.status.desc() if sort_order == "desc" else FileRecord.status.asc()
+
+    offset = (page - 1) * page_size
+
+    files = db.query(FileRecord)\
+        .order_by(order)\
+        .offset(offset)\
+        .limit(page_size)\
+        .all()
+
+    total = db.query(FileRecord).count()
+
+    return {
+        "files": [
+            {
+                "file_id": f.id,
+                "filename": f.filename,
+                "status": f.status,
+                "created_at": f.created_at.isoformat(),
+            }
+            for f in files
+        ],
+        "total": total,
+        "page": page,
+        "page_size": page_size,
+        "total_pages": (total + page_size - 1) // page_size
+    }
 
 
 @app.post("/chat-with-document", tags=["Files"])
