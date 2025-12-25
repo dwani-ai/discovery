@@ -59,26 +59,19 @@ FONT_PATH = os.path.join(os.path.dirname(__file__), "fonts", "DejaVuSans.ttf")
 if not os.path.exists(FONT_PATH):
     logger.warning("DejaVuSans.ttf not found – PDF regeneration will fail until added.")
 
-# ========================= CONFIGURABLE TOKEN LIMITS (ENV VARS) =========================
+# ========================= TOKEN LIMITS (ENV CONFIGURABLE) =========================
 
-# Maximum tokens allowed for retrieved context
-# Can be overridden via environment variable: MAX_CONTEXT_TOKENS
-# Default: 12000 (safe for gemma3 16k context)
 MAX_CONTEXT_TOKENS = int(os.getenv("MAX_CONTEXT_TOKENS", "12000"))
-
-# Maximum tokens reserved for recent chat history
-# Can be overridden via environment variable: MAX_HISTORY_TOKENS
-# Default: 3000
 MAX_HISTORY_TOKENS = int(os.getenv("MAX_HISTORY_TOKENS", "3000"))
 
-logger.info(f"Context limits configured: MAX_CONTEXT_TOKENS={MAX_CONTEXT_TOKENS}, MAX_HISTORY_TOKENS={MAX_HISTORY_TOKENS}")
+logger.info(f"Context limits: MAX_CONTEXT_TOKENS={MAX_CONTEXT_TOKENS}, MAX_HISTORY_TOKENS={MAX_HISTORY_TOKENS}")
 
 # ========================= FASTAPI APP =========================
 
 app = FastAPI(
     title="dwani.ai API",
-    description="Privacy-focused multimodal document extraction, regeneration, and hybrid RAG API",
-    version="1.2.1",
+    description="Privacy-focused multimodal document extraction, regeneration, and multi-document aware hybrid RAG API",
+    version="1.3.0",
 )
 
 app.add_middleware(
@@ -127,7 +120,7 @@ def get_db():
         db.close()
 
 
-# ========================= VECTOR STORE & BM25 =========================
+# ========================= VECTOR STORE =========================
 
 chroma_client = chromadb.PersistentClient(path="./chroma_db")
 collection = chroma_client.get_or_create_collection(name="documents")
@@ -338,7 +331,7 @@ async def background_extraction_task(file_id: str, pdf_bytes: bytes, filename: s
         db.commit()
 
         await store_embeddings_with_pages(file_id, filename, page_texts)
-        logger.info(f"Hybrid-ready extraction completed for {filename} ({len(page_texts)} pages)")
+        logger.info(f"Extraction completed for {filename} ({len(page_texts)} pages)")
 
     except Exception as e:
         file_record.status = FileStatus.FAILED
@@ -358,6 +351,49 @@ def reciprocal_rank_fusion(results: List[Tuple[int, float]], k: int = 60) -> Lis
         score_dict[doc_idx] = score_dict.get(doc_idx, 0) + 1 / (k + rank)
 
     return sorted(score_dict.keys(), key=lambda i: score_dict[i], reverse=True)
+
+
+# ========================= MULTI-DOCUMENT CONTRADICTION DETECTION =========================
+
+async def detect_contradictions(question: str, sources: List[Dict]) -> Optional[str]:
+    if len(sources) < 2:
+        return None
+
+    doc_excerpts = {}
+    for s in sources:
+        filename = s["filename"]
+        if filename not in doc_excerpts:
+            doc_excerpts[filename] = []
+        doc_excerpts[filename].append(s["excerpt"])
+
+    contradiction_prompt = f"""You are an expert analyst. Review the following excerpts from different documents and the user's question.
+
+Question: {question}
+
+"""
+    for filename, excerpts in doc_excerpts.items():
+        contradiction_prompt += f"\n--- From {filename} ---\n" + "\n\n".join(excerpts[:3]) + "\n"
+
+    contradiction_prompt += """
+Are there any contradictions or conflicting information between the documents regarding the question?
+If yes, clearly state what contradicts what.
+If no clear contradiction, respond with "No contradictions detected."
+
+Respond in one short paragraph."""
+
+    try:
+        client = get_openai_client()
+        response = await client.chat.completions.create(
+            model="gemma3",
+            messages=[{"role": "user", "content": contradiction_prompt}],
+            temperature=0.3,
+            max_tokens=512,
+        )
+        result = response.choices[0].message.content.strip()
+        return result if "no contradictions" not in result.lower() else None
+    except Exception as e:
+        logger.warning(f"Contradiction detection failed: {e}")
+        return None
 
 
 # ========================= ROUTES =========================
@@ -521,7 +557,7 @@ async def chat_with_documents(request: MultiChatRequest, db: Session = Depends(g
     all_ranked_pairs = vector_ranked + bm25_ranked
     fused_indices = reciprocal_rank_fusion(all_ranked_pairs)[:20]
 
-    # === Build context with token limit control ===
+    # === Build context with token limit ===
     context_parts = []
     sources = []
     current_token_count = 0
@@ -556,24 +592,32 @@ async def chat_with_documents(request: MultiChatRequest, db: Session = Depends(g
 
     context = "\n\n".join(context_parts) if context_parts else "No relevant content was found in the document."
 
-    # === Trim conversation history ===
-    recent_messages = []
-    history_token_estimate = 0
+    # === Multi-document aware system prompt ===
+    doc_list = ", ".join(set(s["filename"] for s in sources))
+    system_prompt = f"""You are an expert assistant analyzing multiple documents: {doc_list}.
 
-    for msg in reversed(request.messages[-12:]):  # Keep last ~6 turns
-        msg_tokens = len(msg.content.split()) * 1.3
-        if history_token_estimate + msg_tokens > MAX_HISTORY_TOKENS:
-            break
-        recent_messages.insert(0, msg)
-        history_token_estimate += msg_tokens
+When answering:
+- Always explicitly mention which document each fact comes from (e.g., "According to Contract.pdf...", "The NDA states...").
+- If information differs between documents, clearly note it.
+- Be precise and cite page numbers when available.
 
-    system_prompt = f"""You are an expert assistant. Answer the question using only the provided document context.
 If the answer cannot be found, say "I don't know".
 
 Context:
 {context}
 
-Answer clearly and concisely."""
+Answer clearly and professionally."""
+
+    # === Trim conversation history ===
+    recent_messages = []
+    history_token_estimate = 0
+
+    for msg in reversed(request.messages[-12:]):
+        msg_tokens = len(msg.content.split()) * 1.3
+        if history_token_estimate + msg_tokens > MAX_HISTORY_TOKENS:
+            break
+        recent_messages.insert(0, msg)
+        history_token_estimate += msg_tokens
 
     full_messages = [
         {"role": "system", "content": system_prompt},
@@ -589,10 +633,19 @@ Answer clearly and concisely."""
             max_tokens=1024,
         )
 
+        answer = response.choices[0].message.content.strip()
+
+        # === Detect contradictions ===
+        contradiction_warning = await detect_contradictions(question, sources[:10])
+
         sources.sort(key=lambda x: x["relevance_score"], reverse=True)
 
+        final_answer = answer
+        if contradiction_warning:
+            final_answer = f"⚠️ **Potential Contradiction Detected**\n\n{contradiction_warning}\n\n**Answer:**\n{answer}"
+
         return {
-            "answer": response.choices[0].message.content.strip(),
+            "answer": final_answer,
             "sources": [
                 {
                     "filename": s["filename"],
