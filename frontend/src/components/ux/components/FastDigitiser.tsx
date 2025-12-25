@@ -38,6 +38,7 @@ import IconButton from '@mui/material/IconButton';
 import MenuIcon from '@mui/icons-material/Menu';
 import DescriptionIcon from '@mui/icons-material/Description';
 import UploadFileIcon from '@mui/icons-material/UploadFile';
+import PictureAsPdfIcon from '@mui/icons-material/PictureAsPdf';
 
 import Highlight from 'react-highlight-words';
 
@@ -80,7 +81,6 @@ interface Conversation {
 const STORAGE_KEY = 'dwani_conversations';
 
 export default function Digitiser() {
-  const [previewOpen, setPreviewOpen] = useState(false);
   const [chatOpen, setChatOpen] = useState(false);
   const [drawerOpen, setDrawerOpen] = useState(false);
   const [userMessage, setUserMessage] = useState('');
@@ -96,11 +96,9 @@ export default function Digitiser() {
   const [filesLoading, setFilesLoading] = useState(true);
   const [conversations, setConversations] = useState<Conversation[]>([]);
 
-  // Multiple file upload state
   const [localUploads, setLocalUploads] = useState<LocalUpload[]>([]);
   const [isUploading, setIsUploading] = useState(false);
 
-  // Multi-file selection & active chat state
   const [selectedFileIds, setSelectedFileIds] = useState<Set<string>>(new Set());
   const [activeChatFileIds, setActiveChatFileIds] = useState<string[]>([]);
   const [activeChatFilenames, setActiveChatFilenames] = useState<string[]>([]);
@@ -108,7 +106,7 @@ export default function Digitiser() {
   const API_BASE = import.meta.env.VITE_DWANI_API_BASE_URL || 'https://discovery-server.dwani.ai';
   const API_KEY = import.meta.env.VITE_DWANI_API_KEY;
 
-  // Load conversations
+  // Load conversations from localStorage
   useEffect(() => {
     const saved = localStorage.getItem(STORAGE_KEY);
     if (saved) {
@@ -121,12 +119,14 @@ export default function Digitiser() {
     }
   }, []);
 
+  // Save conversations whenever they change
   useEffect(() => {
     if (conversations.length > 0) {
       localStorage.setItem(STORAGE_KEY, JSON.stringify(conversations));
     }
   }, [conversations]);
 
+  // Fetch uploaded files + periodic refresh
   const fetchUploadedFiles = async () => {
     setFilesLoading(true);
     try {
@@ -146,7 +146,7 @@ export default function Digitiser() {
 
   useEffect(() => {
     fetchUploadedFiles();
-    const interval = setInterval(fetchUploadedFiles, 5000); // Refresh every 5s
+    const interval = setInterval(fetchUploadedFiles, 5000);
     return () => clearInterval(interval);
   }, []);
 
@@ -189,6 +189,7 @@ export default function Digitiser() {
     return new Date(timestamp).toLocaleDateString();
   };
 
+  // Multiple file upload handling
   const handleFileChange = (event: React.ChangeEvent<HTMLInputElement>) => {
     const files = event.target.files;
     if (!files || files.length === 0) return;
@@ -210,7 +211,6 @@ export default function Digitiser() {
       uploadNextFile([...localUploads, ...newUploads]);
     }
 
-    // Reset input
     event.target.value = '';
   };
 
@@ -261,9 +261,58 @@ export default function Digitiser() {
     }
   };
 
-  const handleOpenPreview = () => {
-    // Preview logic can be extended per file later
-    alert('Preview for multiple files coming soon!');
+  // Generate merged (or single) clean PDF from selected files
+  const handleGenerateMergedPdf = async () => {
+    const selectedCompleted = allFiles
+      .filter(f => selectedFileIds.has(f.file_id) && f.status === 'completed');
+
+    if (selectedCompleted.length === 0) {
+      alert('Please select at least one completed document.');
+      return;
+    }
+
+    try {
+      const response = await fetch(`${API_BASE}/files/merge-pdf`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'X-API-KEY': API_KEY || '',
+        },
+        body: JSON.stringify({
+          file_ids: selectedCompleted.map(f => f.file_id)
+        }),
+      });
+
+      if (!response.ok) {
+        const err = await response.json().catch(() => ({}));
+        throw new Error(err.detail || 'Failed to generate PDF');
+      }
+
+      const blob = await response.blob();
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+
+      let downloadFilename;
+      if (selectedCompleted.length === 1) {
+        const originalName = selectedCompleted[0].filename.replace(/\.pdf$/i, '');
+        downloadFilename = `clean_${originalName}.pdf`;
+      } else {
+        const baseNames = selectedCompleted
+          .map(f => f.filename.replace(/\.pdf$/i, ''))
+          .join('_');
+        const dateStr = new Date().toISOString().slice(0, 10);
+        downloadFilename = `merged_clean_${baseNames}_${dateStr}.pdf`;
+      }
+
+      a.download = downloadFilename;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      URL.revokeObjectURL(url);
+    } catch (err) {
+      alert(err instanceof Error ? err.message : 'Failed to generate PDF');
+    }
   };
 
   const toggleDrawer = () => setDrawerOpen(prev => !prev);
@@ -389,7 +438,7 @@ export default function Digitiser() {
     }
   };
 
-  // Combine server files + local uploads for display
+  // Combine server files + local uploads for unified display
   const allFiles = [
     ...uploadedFiles.map(f => ({ ...f, source: 'server' as const })),
     ...localUploads.map(u => ({
@@ -403,6 +452,10 @@ export default function Digitiser() {
     }))
   ].sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime());
 
+  const selectedCompletedCount = allFiles.filter(f => 
+    selectedFileIds.has(f.file_id) && f.status === 'completed'
+  ).length;
+
   return (
     <Box sx={{
       display: 'flex',
@@ -413,6 +466,7 @@ export default function Digitiser() {
       minHeight: '100vh',
       bgcolor: 'background.default',
     }}>
+      {/* Header */}
       <Stack direction="row" spacing={2} alignItems="center" sx={{ width: { xs: '100%', sm: '90%', md: '1000px' }, mb: 4 }}>
         <IconButton onClick={toggleDrawer} size="large" edge="start">
           <MenuIcon />
@@ -422,27 +476,41 @@ export default function Digitiser() {
 
       <Stack spacing={5} sx={{ width: { xs: '100%', sm: '90%', md: '1000px' } }}>
 
+        {/* Selection Actions Bar */}
         {selectedFileIds.size > 0 && (
           <Alert
             severity="info"
             action={
-              <Button
-                color="inherit"
-                size="small"
-                variant="outlined"
-                onClick={() => {
-                  const selected = allFiles
-                    .filter(f => selectedFileIds.has(f.file_id) && f.status === 'completed')
-                  if (selected.length > 0) {
-                    openChatForFiles(
-                      selected.map(f => f.file_id),
-                      selected.map(f => f.filename)
-                    );
-                  }
-                }}
-              >
-                Chat with {selectedFileIds.size} selected
-              </Button>
+              <Stack direction="row" spacing={1}>
+                <Button
+                  color="inherit"
+                  size="small"
+                  variant="outlined"
+                  startIcon={<PictureAsPdfIcon />}
+                  onClick={handleGenerateMergedPdf}
+                  disabled={selectedCompletedCount === 0}
+                >
+                  Generate PDF ({selectedCompletedCount})
+                </Button>
+                <Button
+                  color="inherit"
+                  size="small"
+                  variant="outlined"
+                  onClick={() => {
+                    const selected = allFiles
+                      .filter(f => selectedFileIds.has(f.file_id) && f.status === 'completed');
+                    if (selected.length > 0) {
+                      openChatForFiles(
+                        selected.map(f => f.file_id),
+                        selected.map(f => f.filename)
+                      );
+                    }
+                  }}
+                  disabled={selectedCompletedCount === 0}
+                >
+                  Chat with {selectedFileIds.size}
+                </Button>
+              </Stack>
             }
             sx={{ mb: 2 }}
           >
@@ -450,6 +518,7 @@ export default function Digitiser() {
           </Alert>
         )}
 
+        {/* Documents Table */}
         <Box>
           <Typography variant="h6" gutterBottom>
             Your Documents ({allFiles.length})
@@ -466,59 +535,60 @@ export default function Digitiser() {
                 </TableRow>
               </TableHead>
               <TableBody>
-                {allFiles.map((doc) => (
-                  <TableRow key={doc.file_id} hover selected={selectedFileIds.has(doc.file_id)}>
-                    <TableCell padding="checkbox">
-                      <Checkbox
-                        checked={selectedFileIds.has(doc.file_id)}
-                        onChange={(e) => {
-                          const newSet = new Set(selectedFileIds);
-                          if (e.target.checked) newSet.add(doc.file_id);
-                          else newSet.delete(doc.file_id);
-                          setSelectedFileIds(newSet);
-                        }}
-                        disabled={doc.status !== 'completed'}
-                      />
-                    </TableCell>
-                    <TableCell>
-                      <Tooltip title={doc.filename}>
-                        <Typography noWrap sx={{ maxWidth: 300 }}>
-                          {doc.filename}
-                        </Typography>
-                      </Tooltip>
-                    </TableCell>
-                    <TableCell>{formatDate(doc.created_at)}</TableCell>
-                    <TableCell>
-                      <Stack spacing={1}>
-                        <Chip
-                          label={getStatusText(doc.status)}
-                          color={getStatusColor(doc.status)}
-                          size="small"
-                        />
-                        {doc.source === 'local' && doc.progress < 100 && (
-                          <LinearProgress variant="determinate" value={doc.progress} />
-                        )}
-                        {doc.error && <Typography variant="caption" color="error">{doc.error}</Typography>}
-                      </Stack>
-                    </TableCell>
-                    <TableCell align="center">
-                      <Button
-                        variant="outlined"
-                        size="small"
-                        onClick={() => openChatForFiles([doc.file_id], [doc.filename])}
-                        disabled={doc.status !== 'completed'}
-                      >
-                        Chat
-                      </Button>
-                    </TableCell>
-                  </TableRow>
-                ))}
-                {allFiles.length === 0 && !isUploading && (
+                {allFiles.length === 0 && !isUploading ? (
                   <TableRow>
                     <TableCell colSpan={5} align="center" sx={{ py: 8, color: 'text.secondary' }}>
                       No documents uploaded yet. Click below to add some!
                     </TableCell>
                   </TableRow>
+                ) : (
+                  allFiles.map((doc) => (
+                    <TableRow key={doc.file_id} hover selected={selectedFileIds.has(doc.file_id)}>
+                      <TableCell padding="checkbox">
+                        <Checkbox
+                          checked={selectedFileIds.has(doc.file_id)}
+                          onChange={(e) => {
+                            const newSet = new Set(selectedFileIds);
+                            if (e.target.checked) newSet.add(doc.file_id);
+                            else newSet.delete(doc.file_id);
+                            setSelectedFileIds(newSet);
+                          }}
+                          disabled={doc.status !== 'completed'}
+                        />
+                      </TableCell>
+                      <TableCell>
+                        <Tooltip title={doc.filename}>
+                          <Typography noWrap sx={{ maxWidth: 300 }}>
+                            {doc.filename}
+                          </Typography>
+                        </Tooltip>
+                      </TableCell>
+                      <TableCell>{formatDate(doc.created_at)}</TableCell>
+                      <TableCell>
+                        <Stack spacing={1}>
+                          <Chip
+                            label={getStatusText(doc.status)}
+                            color={getStatusColor(doc.status)}
+                            size="small"
+                          />
+                          {doc.source === 'local' && doc.progress < 100 && (
+                            <LinearProgress variant="determinate" value={doc.progress} />
+                          )}
+                          {doc.error && <Typography variant="caption" color="error">{doc.error}</Typography>}
+                        </Stack>
+                      </TableCell>
+                      <TableCell align="center">
+                        <Button
+                          variant="outlined"
+                          size="small"
+                          onClick={() => openChatForFiles([doc.file_id], [doc.filename])}
+                          disabled={doc.status !== 'completed'}
+                        >
+                          Chat
+                        </Button>
+                      </TableCell>
+                    </TableRow>
+                  ))
                 )}
               </TableBody>
             </Table>
@@ -527,6 +597,7 @@ export default function Digitiser() {
 
         <Divider />
 
+        {/* Upload Section */}
         <Typography variant="h6" gutterBottom>
           Upload Documents (Multiple PDFs Supported)
         </Typography>
@@ -561,7 +632,7 @@ export default function Digitiser() {
 
         {localUploads.length > 0 && (
           <Alert severity="info" sx={{ mt: 2 }}>
-            {localUploads.length} file(s) added. They will appear in the table above as they upload and process.
+            {localUploads.length} file(s) added. They will appear in the table as they process.
           </Alert>
         )}
       </Stack>
@@ -630,7 +701,12 @@ export default function Digitiser() {
                 ? activeChatFilenames[0]
                 : `${activeChatFilenames.length} documents`}
             </Typography>
-            <Button startIcon={<SearchIcon />} onClick={toggleSearch} variant={showSearchResults ? "contained" : "outlined"} size="small">
+            <Button
+              startIcon={<SearchIcon />}
+              onClick={toggleSearch}
+              variant={showSearchResults ? "contained" : "outlined"}
+              size="small"
+            >
               {showSearchResults ? 'Close Search' : 'Search'}
             </Button>
           </Stack>
@@ -651,7 +727,7 @@ export default function Digitiser() {
                     highlightClassName="search-highlight"
                     searchWords={[searchQuery.trim()]}
                     autoEscape
-                    textToHighlight="Placeholder – full text search coming soon"
+                    textToHighlight="Full text search will be enhanced in future updates"
                   />
                 </Typography>
               )}
