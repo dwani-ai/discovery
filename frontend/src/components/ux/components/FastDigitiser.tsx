@@ -103,7 +103,11 @@ export default function Digitiser() {
   const [searchQuery, setSearchQuery] = useState('');
   const [showSearchResults, setShowSearchResults] = useState(false);
 
+  // Server-side files (paginated)
   const [uploadedFiles, setUploadedFiles] = useState<UploadedFile[]>([]);
+  const [totalFiles, setTotalFiles] = useState(0);
+  const [totalPages, setTotalPages] = useState(1);
+
   const [conversations, setConversations] = useState<Conversation[]>([]);
 
   const [localUploads, setLocalUploads] = useState<LocalUpload[]>([]);
@@ -116,7 +120,7 @@ export default function Digitiser() {
   const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
   const [filesToDelete, setFilesToDelete] = useState<string[]>([]);
 
-  // Pagination & Sorting State
+  // Server-side pagination & sorting
   const [page, setPage] = useState(1);
   const [pageSize, setPageSize] = useState(25);
   const [sortBy, setSortBy] = useState<'filename' | 'created_at' | 'status'>('created_at');
@@ -145,26 +149,41 @@ export default function Digitiser() {
     }
   }, [conversations]);
 
-  // Fetch uploaded files
+  // Fetch uploaded files from server with pagination & sorting
   const fetchUploadedFiles = async () => {
     try {
-      const response = await fetch(`${API_BASE}/files/`, {
+      const params = new URLSearchParams({
+        page: page.toString(),
+        page_size: pageSize.toString(),
+        sort_by: sortBy,
+        sort_order: sortOrder,
+      });
+
+      const response = await fetch(`${API_BASE}/files/?${params}`, {
         headers: { 'X-API-KEY': API_KEY || '' },
       });
+
       if (response.ok) {
         const data = await response.json();
-        setUploadedFiles(data);
+        setUploadedFiles(data.files || []);
+        setTotalFiles(data.total || 0);
+        setTotalPages(data.total_pages || 1);
       }
     } catch (err) {
       console.error('Failed to fetch files list');
     }
   };
 
+  // Re-fetch when pagination or sorting changes
   useEffect(() => {
     fetchUploadedFiles();
-    const interval = setInterval(fetchUploadedFiles, 5000);
+  }, [page, pageSize, sortBy, sortOrder]);
+
+  // Periodic refresh for status updates
+  useEffect(() => {
+    const interval = setInterval(fetchUploadedFiles, 10000); // every 10s
     return () => clearInterval(interval);
-  }, []);
+  }, [page, pageSize, sortBy, sortOrder]);
 
   const getStatusColor = (s: string) => {
     switch (s) {
@@ -351,7 +370,9 @@ export default function Digitiser() {
         alert(`${failed.length} file(s) could not be deleted.`);
       }
 
-      setUploadedFiles(prev => prev.filter(f => !filesToDelete.includes(f.file_id)));
+      // Refresh current page
+      fetchUploadedFiles();
+
       setSelectedFileIds(prev => {
         const newSet = new Set(prev);
         filesToDelete.forEach(id => newSet.delete(id));
@@ -512,7 +533,7 @@ export default function Digitiser() {
     }
   };
 
-  // Sorting Handler
+  // Sorting handler - triggers server re-fetch
   const handleSort = (column: 'filename' | 'created_at' | 'status') => {
     if (sortBy === column) {
       setSortOrder(prev => prev === 'asc' ? 'desc' : 'asc');
@@ -520,15 +541,10 @@ export default function Digitiser() {
       setSortBy(column);
       setSortOrder(column === 'created_at' ? 'desc' : 'asc');
     }
-    setPage(1);
+    setPage(1); // Reset to first page
   };
 
-  // Reset page when file list changes
-  useEffect(() => {
-    setPage(1);
-  }, [allFiles.length]);
-
-  // Combined files list with deduplication
+  // Combined files: server (paginated) + local uploads
   const serverFileIds = new Set(uploadedFiles.map(f => f.file_id));
 
   const serverDocs = uploadedFiles.map(f => ({
@@ -550,30 +566,7 @@ export default function Digitiser() {
       error: u.error,
     }));
 
-  const allFiles = [...serverDocs, ...localDocs]
-    .sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime());
-
-  // Sorting Logic
-  const sortedFiles = [...allFiles].sort((a, b) => {
-    let aVal: any = a[sortBy];
-    let bVal: any = b[sortBy];
-
-    if (sortBy === 'created_at') {
-      aVal = new Date(aVal).getTime();
-      bVal = new Date(bVal).getTime();
-    } else if (sortBy === 'status') {
-      const statusOrder = { completed: 0, processing: 1, pending: 2, failed: 3, uploading: 4 };
-      aVal = statusOrder[a.status] ?? 5;
-      bVal = statusOrder[b.status] ?? 5;
-    }
-
-    if (aVal < bVal) return sortOrder === 'asc' ? -1 : 1;
-    if (aVal > bVal) return sortOrder === 'asc' ? 1 : -1;
-    return 0;
-  });
-
-  const totalPages = Math.ceil(sortedFiles.length / pageSize);
-  const paginatedFiles = sortedFiles.slice((page - 1) * pageSize, page * pageSize);
+  const allFiles = [...serverDocs, ...localDocs];
 
   const completedCount = allFiles.filter(f => f.status === 'completed').length;
   const selectedCompletedCount = allFiles.filter(f => 
@@ -654,7 +647,7 @@ export default function Digitiser() {
         {/* Documents Header with Global Chat Button */}
         <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 2 }}>
           <Typography variant="h6">
-            Your Documents ({allFiles.length})
+            Your Documents ({totalFiles})
           </Typography>
 
           <Tooltip title={completedCount === 0 ? "Waiting for documents to finish processing" : "Chat with all completed documents"}>
@@ -679,7 +672,7 @@ export default function Digitiser() {
           </Tooltip>
         </Box>
 
-        {/* Documents List with Pagination & Sorting */}
+        {/* Documents List with Server-Side Pagination */}
         <Box>
           <Paper elevation={2} sx={{ borderRadius: 2, overflow: 'hidden' }}>
             <TableContainer sx={{ maxHeight: 600 }}>
@@ -735,16 +728,14 @@ export default function Digitiser() {
                   </TableRow>
                 </TableHead>
                 <TableBody>
-                  {paginatedFiles.length === 0 ? (
+                  {allFiles.length === 0 ? (
                     <TableRow>
                       <TableCell colSpan={5} align="center" sx={{ py: 8, color: 'text.secondary' }}>
-                        {allFiles.length === 0 
-                          ? "No documents uploaded yet. Click below to add some!"
-                          : "No documents match the current filters."}
+                        No documents uploaded yet. Click below to add some!
                       </TableCell>
                     </TableRow>
                   ) : (
-                    paginatedFiles.map((doc) => (
+                    allFiles.map((doc) => (
                       <TableRow key={doc.file_id} hover selected={selectedFileIds.has(doc.file_id)}>
                         <TableCell padding="checkbox">
                           <Checkbox
@@ -810,7 +801,7 @@ export default function Digitiser() {
             {/* Pagination Controls */}
             <Box sx={{ p: 2, borderTop: 1, borderColor: 'divider', display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: 2 }}>
               <Typography variant="body2" color="text.secondary">
-                Showing {(page - 1) * pageSize + 1}–{Math.min(page * pageSize, allFiles.length)} of {allFiles.length} documents
+                Showing {(page - 1) * pageSize + 1}–{Math.min(page * pageSize, totalFiles)} of {totalFiles} documents
               </Typography>
               <Stack direction="row" spacing={2} alignItems="center">
                 <Typography variant="body2">Rows per page:</Typography>
@@ -822,7 +813,7 @@ export default function Digitiser() {
                     setPage(1);
                   }}
                 >
-                  {[10, 25, 50].map(size => (
+                  {[10, 25, 50, 100].map(size => (
                     <MenuItem key={size} value={size}>{size}</MenuItem>
                   ))}
                 </Select>
@@ -890,7 +881,6 @@ export default function Digitiser() {
           </Typography>
           <Divider sx={{ mb: 2 }} />
           <List>
-            {/* Global Chat - Always at top */}
             {completedCount > 0 && (
               <ListItem disablePadding>
                 <ListItemButton
@@ -926,7 +916,6 @@ export default function Digitiser() {
               </ListItem>
             )}
 
-            {/* Regular conversations */}
             {conversations.filter(c => !c.isGlobal).length === 0 && completedCount === 0 ? (
               <Typography color="text.secondary" sx={{ p: 4, textAlign: 'center' }}>
                 No conversations yet.<br />Upload documents and start chatting!
