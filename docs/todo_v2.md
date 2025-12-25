@@ -115,5 +115,6 @@ Let me know which one(s) you'd like to tackle next — I’ll give you the compl
 - file delete option -  done
 - file generate option -  done
 - chat with all documents -  done
+- add page level citations - done
 
 - add file filters 

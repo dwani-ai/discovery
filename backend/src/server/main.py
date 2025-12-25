@@ -8,7 +8,7 @@ import os
 import uuid
 from datetime import datetime
 from io import BytesIO
-from typing import List, Optional
+from typing import List, Optional, Dict
 
 import chromadb
 from chromadb.utils import embedding_functions
@@ -62,8 +62,8 @@ if not os.path.exists(FONT_PATH):
 
 app = FastAPI(
     title="dwani.ai API",
-    description="Privacy-focused multimodal document extraction, regeneration, and RAG API",
-    version="1.0.0",
+    description="Privacy-focused multimodal document extraction, regeneration, and RAG API with page-level citations",
+    version="1.1.0",
 )
 
 app.add_middleware(
@@ -95,7 +95,7 @@ class FileRecord(Base):
     filename = Column(String, index=True)
     content_type = Column(String)
     status = Column(String, default=FileStatus.PENDING)
-    extracted_text = Column(Text, nullable=True)
+    extracted_text = Column(Text, nullable=True)  # Full text (kept for regenerated PDF)
     error_message = Column(Text, nullable=True)
     created_at = Column(DateTime, default=datetime.utcnow)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
@@ -117,7 +117,7 @@ def get_db():
 chroma_client = chromadb.PersistentClient(path="./chroma_db")
 collection = chroma_client.get_or_create_collection(name="documents")
 
-# Upgraded to a much stronger embedding model for better retrieval
+# Best-in-class small embedding model
 embedding_function = embedding_functions.SentenceTransformerEmbeddingFunction(
     model_name="BAAI/bge-small-en-v1.5"
 )
@@ -168,16 +168,44 @@ def clean_text(text: str) -> str:
     return "".join(ch for ch in text if unicodedata.category(ch)[0] != "C" or ch in "\n\r\t")
 
 
-def chunk_text(text: str, chunk_size: int = 800, overlap: int = 100) -> List[str]:
-    words = text.split()
+def chunk_text_with_pages(page_texts: List[str], chunk_size: int = 800, overlap: int = 100) -> List[Dict]:
+    """
+    Chunk text while preserving page boundaries and returning metadata with page numbers.
+    Returns list of dicts: {'text': str, 'page_start': int, 'page_end': int}
+    """
     chunks = []
-    i = 0
-    while i < len(words):
-        chunk = " ".join(words[i:i + chunk_size])
-        chunks.append(chunk)
-        i += chunk_size - overlap
-        if i >= len(words) and len(chunks) > 1:
-            break
+    current_chunk = ""
+    current_pages = set()
+    words_buffer = []
+
+    for page_num, page_text in enumerate(page_texts, start=1):
+        page_words = page_text.split()
+        words_buffer.extend([(word, page_num) for word in page_words])
+
+        while len(words_buffer) > chunk_size:
+            chunk_words = words_buffer[:chunk_size]
+            chunk_text = " ".join(word for word, _ in chunk_words)
+            pages_in_chunk = {page for _, page in chunk_words}
+
+            chunks.append({
+                'text': chunk_text,
+                'page_start': min(pages_in_chunk),
+                'page_end': max(pages_in_chunk)
+            })
+
+            # Overlap: keep last `overlap` words for next chunk
+            words_buffer = words_buffer[chunk_size - overlap:]
+
+    # Final chunk
+    if words_buffer:
+        chunk_text = " ".join(word for word, _ in words_buffer)
+        pages_in_chunk = {page for _, page in words_buffer}
+        chunks.append({
+            'text': chunk_text,
+            'page_start': min(pages_in_chunk),
+            'page_end': max(pages_in_chunk)
+        })
+
     return chunks
 
 
@@ -204,9 +232,10 @@ def get_openai_client(model: str = "gemma3") -> AsyncOpenAI:
 
 # ========================= SERVICES =========================
 
-async def extract_text_from_images(images: List[Image.Image]) -> str:
+async def extract_text_from_images_per_page(images: List[Image.Image]) -> List[str]:
+    """Extract text from each page individually and return list of page texts"""
     client = get_openai_client()
-    result = ""
+    page_texts = []
 
     for i, img in enumerate(images):
         base64_img = encode_image(img)
@@ -216,7 +245,7 @@ async def extract_text_from_images(images: List[Image.Image]) -> str:
                 "role": "user",
                 "content": [
                     {"type": "image_url", "image_url": {"url": f"data:image/jpeg;base64,{base64_img}"}},
-                    {"type": "text", "text": f"Extract clean plain text from page {i+1}."},
+                    {"type": "text", "text": f"Extract clean, accurate plain text from this page. Preserve structure."},
                 ],
             },
         ]
@@ -227,26 +256,40 @@ async def extract_text_from_images(images: List[Image.Image]) -> str:
             temperature=0.2,
             max_tokens=2048,
         )
-        result += response.choices[0].message.content.strip() + "\n\n"
+        page_text = response.choices[0].message.content.strip()
+        page_texts.append(page_text)
 
-    return result.strip()
+    return page_texts
 
 
-async def store_embeddings(file_id: str, text: str):
-    chunks = chunk_text(text)
-    if not chunks:
+async def store_embeddings_with_pages(file_id: str, filename: str, page_texts: List[str]):
+    chunks_with_meta = chunk_text_with_pages(page_texts)
+
+    if not chunks_with_meta:
         return
 
-    chunk_ids = [hashlib.md5(f"{file_id}_{j}".encode()).hexdigest() for j in range(len(chunks))]
+    documents = [c['text'] for c in chunks_with_meta]
+    metadatas = [
+        {
+            "file_id": file_id,
+            "filename": filename,
+            "page_start": c['page_start'],
+            "page_end": c['page_end'],
+            "chunk_index": i
+        }
+        for i, c in enumerate(chunks_with_meta)
+    ]
+    chunk_ids = [hashlib.md5(f"{file_id}_{i}".encode()).hexdigest() for i in range(len(documents))]
+
     collection.delete(where={"file_id": file_id})
 
     collection.add(
-        embeddings=embedding_function(chunks),
-        documents=chunks,
-        metadatas=[{"file_id": file_id, "chunk_index": j} for j in range(len(chunks))],
+        embeddings=embedding_function(documents),
+        documents=documents,
+        metadatas=metadatas,
         ids=chunk_ids,
     )
-    logger.info(f"Stored {len(chunks)} embeddings for file {file_id}")
+    logger.info(f"Stored {len(documents)} page-aware chunks for {filename}")
 
 
 def generate_pdf_from_text(text: str) -> BytesIO:
@@ -282,14 +325,15 @@ async def background_extraction_task(file_id: str, pdf_bytes: bytes, filename: s
 
     try:
         images = await pdf_to_images(pdf_bytes)
-        extracted = await extract_text_from_images(images)
+        page_texts = await extract_text_from_images_per_page(images)
 
-        file_record.extracted_text = extracted
+        full_text = "\n\n".join(page_texts)
+        file_record.extracted_text = full_text
         file_record.status = FileStatus.COMPLETED
         db.commit()
 
-        await store_embeddings(file_id, extracted)
-        logger.info(f"Extraction completed for {filename} ({file_id})")
+        await store_embeddings_with_pages(file_id, filename, page_texts)
+        logger.info(f"Page-aware extraction completed for {filename} ({len(page_texts)} pages)")
 
     except Exception as e:
         file_record.status = FileStatus.FAILED
@@ -309,9 +353,10 @@ async def legacy_extract_text(file: UploadFile):
 
     pdf_bytes = await file.read()
     images = await pdf_to_images(pdf_bytes)
-    text = await extract_text_from_images(images)
+    page_texts = await extract_text_from_images_per_page(images)
+    full_text = "\n\n".join(page_texts)
 
-    return ExtractionResponse(extracted_text=text, page_count=len(images))
+    return ExtractionResponse(extracted_text=full_text, page_count=len(images))
 
 
 @app.post("/files/upload", response_model=FileUploadResponse, tags=["Files"])
@@ -438,7 +483,7 @@ async def chat_with_documents(request: MultiChatRequest, db: Session = Depends(g
 
     results = collection.query(
         query_embeddings=embedding_function([question]),
-        n_results=20,  # Increased for better recall with stronger model
+        n_results=20,
         where={"file_id": {"$in": request.file_ids}},
         include=["documents", "metadatas", "distances"],
     )
@@ -450,25 +495,29 @@ async def chat_with_documents(request: MultiChatRequest, db: Session = Depends(g
     context_parts = []
     sources = []
 
-    # Include top 20 chunks without strict relevance filtering
     for doc, meta, distance in zip(docs, metas, distances):
-        if not meta or 'file_id' not in meta:
+        if not meta:
             continue
         relevance = 1 - distance
 
-        file_id = meta['file_id']
-        filename = next((r.filename for r in records if r.id == file_id), "Unknown Document")
+        filename = meta.get("filename", "Unknown Document")
+        page_start = meta.get("page_start")
+        page_end = meta.get("page_end")
+
+        page_citation = f"Page {page_start}"
+        if page_end != page_start:
+            page_citation = f"Pages {page_start}–{page_end}"
 
         context_parts.append(doc)
         sources.append({
             "filename": filename,
+            "page_citation": page_citation,
             "excerpt": doc.strip(),
             "relevance_score": round(relevance, 3)
         })
 
     context = "\n\n".join(context_parts) if context_parts else "No relevant content was found in the document."
 
-    # Strict prompt preserved exactly as requested
     system_prompt = f"""You are an expert assistant. Answer the question using only the provided document context.
 If the answer cannot be found, say "I don't know".
 
@@ -490,11 +539,20 @@ Answer clearly and concisely."""
         max_tokens=1024,
     )
 
+    # Sort sources by relevance
     sources.sort(key=lambda x: x["relevance_score"], reverse=True)
 
     return {
         "answer": response.choices[0].message.content.strip(),
-        "sources": sources[:5]
+        "sources": [
+            {
+                "filename": s["filename"],
+                "page": s["page_citation"],
+                "excerpt": s["excerpt"][:500],
+                "relevance_score": s["relevance_score"]
+            }
+            for s in sources[:5]
+        ]
     }
 
 
