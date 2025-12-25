@@ -29,7 +29,6 @@ import TableCell from '@mui/material/TableCell';
 import TableContainer from '@mui/material/TableContainer';
 import TableHead from '@mui/material/TableHead';
 import TableRow from '@mui/material/TableRow';
-import TableSortLabel from '@mui/material/TableSortLabel';
 import Tooltip from '@mui/material/Tooltip';
 import Checkbox from '@mui/material/Checkbox';
 import Accordion from '@mui/material/Accordion';
@@ -44,10 +43,6 @@ import UploadFileIcon from '@mui/icons-material/UploadFile';
 import PictureAsPdfIcon from '@mui/icons-material/PictureAsPdf';
 import DeleteIcon from '@mui/icons-material/Delete';
 import LanguageIcon from '@mui/icons-material/Language';
-import Select from '@mui/material/Select';
-import MenuItem from '@mui/material/MenuItem';
-import ChevronLeftIcon from '@mui/icons-material/ChevronLeft';
-import ChevronRightIcon from '@mui/icons-material/ChevronRight';
 
 import Highlight from 'react-highlight-words';
 
@@ -103,11 +98,7 @@ export default function Digitiser() {
   const [searchQuery, setSearchQuery] = useState('');
   const [showSearchResults, setShowSearchResults] = useState(false);
 
-  // Server-side files (paginated)
   const [uploadedFiles, setUploadedFiles] = useState<UploadedFile[]>([]);
-  const [totalFiles, setTotalFiles] = useState(0);
-  const [totalPages, setTotalPages] = useState(1);
-
   const [conversations, setConversations] = useState<Conversation[]>([]);
 
   const [localUploads, setLocalUploads] = useState<LocalUpload[]>([]);
@@ -119,12 +110,6 @@ export default function Digitiser() {
 
   const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
   const [filesToDelete, setFilesToDelete] = useState<string[]>([]);
-
-  // Server-side pagination & sorting
-  const [page, setPage] = useState(1);
-  const [pageSize, setPageSize] = useState(25);
-  const [sortBy, setSortBy] = useState<'filename' | 'created_at' | 'status'>('created_at');
-  const [sortOrder, setSortOrder] = useState<'asc' | 'desc'>('desc');
 
   const API_BASE = import.meta.env.VITE_DWANI_API_BASE_URL || 'https://discovery-server.dwani.ai';
   const API_KEY = import.meta.env.VITE_DWANI_API_KEY;
@@ -149,41 +134,26 @@ export default function Digitiser() {
     }
   }, [conversations]);
 
-  // Fetch uploaded files from server with pagination & sorting
+  // Fetch uploaded files
   const fetchUploadedFiles = async () => {
     try {
-      const params = new URLSearchParams({
-        page: page.toString(),
-        page_size: pageSize.toString(),
-        sort_by: sortBy,
-        sort_order: sortOrder,
-      });
-
-      const response = await fetch(`${API_BASE}/files/?${params}`, {
+      const response = await fetch(`${API_BASE}/files/`, {
         headers: { 'X-API-KEY': API_KEY || '' },
       });
-
       if (response.ok) {
         const data = await response.json();
-        setUploadedFiles(data.files || []);
-        setTotalFiles(data.total || 0);
-        setTotalPages(data.total_pages || 1);
+        setUploadedFiles(data);
       }
     } catch (err) {
       console.error('Failed to fetch files list');
     }
   };
 
-  // Re-fetch when pagination or sorting changes
   useEffect(() => {
     fetchUploadedFiles();
-  }, [page, pageSize, sortBy, sortOrder]);
-
-  // Periodic refresh for status updates
-  useEffect(() => {
-    const interval = setInterval(fetchUploadedFiles, 10000); // every 10s
+    const interval = setInterval(fetchUploadedFiles, 5000);
     return () => clearInterval(interval);
-  }, [page, pageSize, sortBy, sortOrder]);
+  }, []);
 
   const getStatusColor = (s: string) => {
     switch (s) {
@@ -370,9 +340,7 @@ export default function Digitiser() {
         alert(`${failed.length} file(s) could not be deleted.`);
       }
 
-      // Refresh current page
-      fetchUploadedFiles();
-
+      setUploadedFiles(prev => prev.filter(f => !filesToDelete.includes(f.file_id)));
       setSelectedFileIds(prev => {
         const newSet = new Set(prev);
         filesToDelete.forEach(id => newSet.delete(id));
@@ -533,18 +501,7 @@ export default function Digitiser() {
     }
   };
 
-  // Sorting handler - triggers server re-fetch
-  const handleSort = (column: 'filename' | 'created_at' | 'status') => {
-    if (sortBy === column) {
-      setSortOrder(prev => prev === 'asc' ? 'desc' : 'asc');
-    } else {
-      setSortBy(column);
-      setSortOrder(column === 'created_at' ? 'desc' : 'asc');
-    }
-    setPage(1); // Reset to first page
-  };
-
-  // Combined files: server (paginated) + local uploads
+  // Combined files list with deduplication
   const serverFileIds = new Set(uploadedFiles.map(f => f.file_id));
 
   const serverDocs = uploadedFiles.map(f => ({
@@ -566,7 +523,8 @@ export default function Digitiser() {
       error: u.error,
     }));
 
-  const allFiles = [...serverDocs, ...localDocs];
+  const allFiles = [...serverDocs, ...localDocs]
+    .sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime());
 
   const completedCount = allFiles.filter(f => f.status === 'completed').length;
   const selectedCompletedCount = allFiles.filter(f => 
@@ -647,7 +605,7 @@ export default function Digitiser() {
         {/* Documents Header with Global Chat Button */}
         <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 2 }}>
           <Typography variant="h6">
-            Your Documents ({totalFiles})
+            Your Documents ({allFiles.length})
           </Typography>
 
           <Tooltip title={completedCount === 0 ? "Waiting for documents to finish processing" : "Chat with all completed documents"}>
@@ -672,163 +630,89 @@ export default function Digitiser() {
           </Tooltip>
         </Box>
 
-        {/* Documents List with Server-Side Pagination */}
+        {/* Documents Table */}
         <Box>
-          <Paper elevation={2} sx={{ borderRadius: 2, overflow: 'hidden' }}>
-            <TableContainer sx={{ maxHeight: 600 }}>
-              <Table stickyHeader>
-                <TableHead>
+          <TableContainer component={Paper} elevation={2} sx={{ maxHeight: 500, overflow: 'auto', borderRadius: 2 }}>
+            <Table stickyHeader>
+              <TableHead>
+                <TableRow>
+                  <TableCell padding="checkbox" sx={{ bgcolor: 'background.paper' }} />
+                  <TableCell sx={{ bgcolor: 'background.paper', fontWeight: 'bold' }}>Filename</TableCell>
+                  <TableCell sx={{ bgcolor: 'background.paper', fontWeight: 'bold' }}>Uploaded</TableCell>
+                  <TableCell sx={{ bgcolor: 'background.paper', fontWeight: 'bold' }}>Status</TableCell>
+                  <TableCell align="center" sx={{ bgcolor: 'background.paper', fontWeight: 'bold' }}>Actions</TableCell>
+                </TableRow>
+              </TableHead>
+              <TableBody>
+                {allFiles.length === 0 && !isUploading ? (
                   <TableRow>
-                    <TableCell padding="checkbox" sx={{ bgcolor: 'background.paper' }}>
-                      <Checkbox
-                        indeterminate={selectedFileIds.size > 0 && selectedFileIds.size < completedCount}
-                        checked={completedCount > 0 && selectedFileIds.size === completedCount}
-                        onChange={(e) => {
-                          if (e.target.checked) {
-                            const allCompletedIds = allFiles
-                              .filter(f => f.status === 'completed')
-                              .map(f => f.file_id);
-                            setSelectedFileIds(new Set(allCompletedIds));
-                          } else {
-                            setSelectedFileIds(new Set());
-                          }
-                        }}
-                      />
-                    </TableCell>
-                    <TableCell sx={{ bgcolor: 'background.paper', fontWeight: 'bold' }}>
-                      <TableSortLabel
-                        active={sortBy === 'filename'}
-                        direction={sortBy === 'filename' ? sortOrder : 'asc'}
-                        onClick={() => handleSort('filename')}
-                      >
-                        Filename
-                      </TableSortLabel>
-                    </TableCell>
-                    <TableCell sx={{ bgcolor: 'background.paper', fontWeight: 'bold' }}>
-                      <TableSortLabel
-                        active={sortBy === 'created_at'}
-                        direction={sortBy === 'created_at' ? sortOrder : 'desc'}
-                        onClick={() => handleSort('created_at')}
-                      >
-                        Uploaded
-                      </TableSortLabel>
-                    </TableCell>
-                    <TableCell sx={{ bgcolor: 'background.paper', fontWeight: 'bold' }}>
-                      <TableSortLabel
-                        active={sortBy === 'status'}
-                        direction={sortBy === 'status' ? sortOrder : 'asc'}
-                        onClick={() => handleSort('status')}
-                      >
-                        Status
-                      </TableSortLabel>
-                    </TableCell>
-                    <TableCell align="center" sx={{ bgcolor: 'background.paper', fontWeight: 'bold' }}>
-                      Actions
+                    <TableCell colSpan={5} align="center" sx={{ py: 8, color: 'text.secondary' }}>
+                      No documents uploaded yet. Click below to add some!
                     </TableCell>
                   </TableRow>
-                </TableHead>
-                <TableBody>
-                  {allFiles.length === 0 ? (
-                    <TableRow>
-                      <TableCell colSpan={5} align="center" sx={{ py: 8, color: 'text.secondary' }}>
-                        No documents uploaded yet. Click below to add some!
+                ) : (
+                  allFiles.map((doc) => (
+                    <TableRow key={doc.file_id} hover selected={selectedFileIds.has(doc.file_id)}>
+                      <TableCell padding="checkbox">
+                        <Checkbox
+                          checked={selectedFileIds.has(doc.file_id)}
+                          onChange={(e) => {
+                            const newSet = new Set(selectedFileIds);
+                            if (e.target.checked) newSet.add(doc.file_id);
+                            else newSet.delete(doc.file_id);
+                            setSelectedFileIds(newSet);
+                          }}
+                          disabled={doc.status !== 'completed'}
+                        />
+                      </TableCell>
+                      <TableCell>
+                        <Tooltip title={doc.filename}>
+                          <Typography noWrap sx={{ maxWidth: 300 }}>
+                            {doc.filename}
+                          </Typography>
+                        </Tooltip>
+                      </TableCell>
+                      <TableCell>{formatDate(doc.created_at)}</TableCell>
+                      <TableCell>
+                        <Stack spacing={1}>
+                          <Chip
+                            label={getStatusText(doc.status)}
+                            color={getStatusColor(doc.status)}
+                            size="small"
+                          />
+                          {doc.source === 'local' && doc.progress < 100 && (
+                            <LinearProgress variant="determinate" value={doc.progress} />
+                          )}
+                          {doc.error && <Typography variant="caption" color="error">{doc.error}</Typography>}
+                        </Stack>
+                      </TableCell>
+                      <TableCell align="center">
+                        <Stack direction="row" spacing={1} justifyContent="center">
+                          <Button
+                            variant="outlined"
+                            size="small"
+                            onClick={() => openChatForFiles([doc.file_id], [doc.filename])}
+                            disabled={doc.status !== 'completed'}
+                          >
+                            Chat
+                          </Button>
+                          {doc.source === 'server' && doc.status === 'completed' && (
+                            <IconButton
+                              size="small"
+                              color="error"
+                              onClick={() => openDeleteDialog([doc.file_id])}
+                            >
+                              <DeleteIcon fontSize="small" />
+                            </IconButton>
+                          )}
+                        </Stack>
                       </TableCell>
                     </TableRow>
-                  ) : (
-                    allFiles.map((doc) => (
-                      <TableRow key={doc.file_id} hover selected={selectedFileIds.has(doc.file_id)}>
-                        <TableCell padding="checkbox">
-                          <Checkbox
-                            checked={selectedFileIds.has(doc.file_id)}
-                            onChange={(e) => {
-                              const newSet = new Set(selectedFileIds);
-                              if (e.target.checked) newSet.add(doc.file_id);
-                              else newSet.delete(doc.file_id);
-                              setSelectedFileIds(newSet);
-                            }}
-                            disabled={doc.status !== 'completed'}
-                          />
-                        </TableCell>
-                        <TableCell>
-                          <Tooltip title={doc.filename}>
-                            <Typography noWrap sx={{ maxWidth: 300 }}>
-                              {doc.filename}
-                            </Typography>
-                          </Tooltip>
-                        </TableCell>
-                        <TableCell>{formatDate(doc.created_at)}</TableCell>
-                        <TableCell>
-                          <Stack spacing={1}>
-                            <Chip
-                              label={getStatusText(doc.status)}
-                              color={getStatusColor(doc.status)}
-                              size="small"
-                            />
-                            {doc.source === 'local' && doc.progress < 100 && (
-                              <LinearProgress variant="determinate" value={doc.progress} />
-                            )}
-                            {doc.error && <Typography variant="caption" color="error">{doc.error}</Typography>}
-                          </Stack>
-                        </TableCell>
-                        <TableCell align="center">
-                          <Stack direction="row" spacing={1} justifyContent="center">
-                            <Button
-                              variant="outlined"
-                              size="small"
-                              onClick={() => openChatForFiles([doc.file_id], [doc.filename])}
-                              disabled={doc.status !== 'completed'}
-                            >
-                              Chat
-                            </Button>
-                            {doc.source === 'server' && doc.status === 'completed' && (
-                              <IconButton
-                                size="small"
-                                color="error"
-                                onClick={() => openDeleteDialog([doc.file_id])}
-                              >
-                                <DeleteIcon fontSize="small" />
-                              </IconButton>
-                            )}
-                          </Stack>
-                        </TableCell>
-                      </TableRow>
-                    ))
-                  )}
-                </TableBody>
-              </Table>
-            </TableContainer>
-
-            {/* Pagination Controls */}
-            <Box sx={{ p: 2, borderTop: 1, borderColor: 'divider', display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: 2 }}>
-              <Typography variant="body2" color="text.secondary">
-                Showing {(page - 1) * pageSize + 1}–{Math.min(page * pageSize, totalFiles)} of {totalFiles} documents
-              </Typography>
-              <Stack direction="row" spacing={2} alignItems="center">
-                <Typography variant="body2">Rows per page:</Typography>
-                <Select
-                  size="small"
-                  value={pageSize}
-                  onChange={(e) => {
-                    setPageSize(Number(e.target.value));
-                    setPage(1);
-                  }}
-                >
-                  {[10, 25, 50, 100].map(size => (
-                    <MenuItem key={size} value={size}>{size}</MenuItem>
-                  ))}
-                </Select>
-                <IconButton onClick={() => setPage(p => Math.max(1, p - 1))} disabled={page === 1}>
-                  <ChevronLeftIcon />
-                </IconButton>
-                <Typography variant="body2">
-                  Page {page} of {totalPages}
-                </Typography>
-                <IconButton onClick={() => setPage(p => Math.min(totalPages, p + 1))} disabled={page === totalPages}>
-                  <ChevronRightIcon />
-                </IconButton>
-              </Stack>
-            </Box>
-          </Paper>
+                  ))
+                )}
+              </TableBody>
+            </Table>
+          </TableContainer>
         </Box>
 
         <Divider />
@@ -881,6 +765,7 @@ export default function Digitiser() {
           </Typography>
           <Divider sx={{ mb: 2 }} />
           <List>
+            {/* Global Chat - Always at top */}
             {completedCount > 0 && (
               <ListItem disablePadding>
                 <ListItemButton
@@ -916,6 +801,7 @@ export default function Digitiser() {
               </ListItem>
             )}
 
+            {/* Regular conversations */}
             {conversations.filter(c => !c.isGlobal).length === 0 && completedCount === 0 ? (
               <Typography color="text.secondary" sx={{ p: 4, textAlign: 'center' }}>
                 No conversations yet.<br />Upload documents and start chatting!
