@@ -15,6 +15,7 @@ import DialogTitle from '@mui/material/DialogTitle';
 import TextField from '@mui/material/TextField';
 import List from '@mui/material/List';
 import ListItem from '@mui/material/ListItem';
+import ListItemButton from '@mui/material/ListItemButton';
 import ListItemText from '@mui/material/ListItemText';
 import ListItemAvatar from '@mui/material/ListItemAvatar';
 import Avatar from '@mui/material/Avatar';
@@ -98,7 +99,6 @@ export default function Digitiser() {
   const [showSearchResults, setShowSearchResults] = useState(false);
 
   const [uploadedFiles, setUploadedFiles] = useState<UploadedFile[]>([]);
-  const [filesLoading, setFilesLoading] = useState(true);
   const [conversations, setConversations] = useState<Conversation[]>([]);
 
   const [localUploads, setLocalUploads] = useState<LocalUpload[]>([]);
@@ -108,7 +108,6 @@ export default function Digitiser() {
   const [activeChatFileIds, setActiveChatFileIds] = useState<string[]>([]);
   const [activeChatFilenames, setActiveChatFilenames] = useState<string[]>([]);
 
-  // Delete confirmation
   const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
   const [filesToDelete, setFilesToDelete] = useState<string[]>([]);
 
@@ -135,9 +134,8 @@ export default function Digitiser() {
     }
   }, [conversations]);
 
-  // Fetch uploaded files from server
+  // Fetch uploaded files
   const fetchUploadedFiles = async () => {
-    setFilesLoading(true);
     try {
       const response = await fetch(`${API_BASE}/files/`, {
         headers: { 'X-API-KEY': API_KEY || '' },
@@ -148,8 +146,6 @@ export default function Digitiser() {
       }
     } catch (err) {
       console.error('Failed to fetch files list');
-    } finally {
-      setFilesLoading(false);
     }
   };
 
@@ -181,7 +177,8 @@ export default function Digitiser() {
       case 'processing': return 'Processing';
       case 'completed': return 'Ready';
       case 'failed': return 'Failed';
-      default: return 'Unknown';
+      default:
+        return 'Unknown';
     }
   };
 
@@ -270,7 +267,6 @@ export default function Digitiser() {
     }
   };
 
-  // Generate clean/merged PDF
   const handleGenerateMergedPdf = async () => {
     const selectedCompleted = allFiles
       .filter(f => selectedFileIds.has(f.file_id) && f.status === 'completed');
@@ -324,7 +320,6 @@ export default function Digitiser() {
     }
   };
 
-  // Delete files
   const handleDeleteFiles = async () => {
     if (filesToDelete.length === 0) return;
 
@@ -506,7 +501,7 @@ export default function Digitiser() {
     }
   };
 
-  // === Combined files list with deduplication ===
+  // Combined files list with deduplication
   const serverFileIds = new Set(uploadedFiles.map(f => f.file_id));
 
   const serverDocs = uploadedFiles.map(f => ({
@@ -770,38 +765,39 @@ export default function Digitiser() {
           </Typography>
           <Divider sx={{ mb: 2 }} />
           <List>
-            {/* Global Chat - Always at top if documents exist */}
+            {/* Global Chat - Always at top */}
             {completedCount > 0 && (
-              <ListItem
-                button
-                onClick={() => {
-                  const completed = allFiles.filter(f => f.status === 'completed');
-                  openChatForFiles(
-                    completed.map(f => f.file_id),
-                    completed.map(f => f.filename),
-                    true
-                  );
-                  setDrawerOpen(false);
-                }}
-                sx={{
-                  borderRadius: 2,
-                  mb: 2,
-                  bgcolor: 'primary.main',
-                  color: 'white',
-                  '&:hover': { bgcolor: 'primary.dark' },
-                }}
-              >
-                <ListItemAvatar>
-                  <Avatar sx={{ bgcolor: 'white', color: 'primary.main' }}>
-                    <LanguageIcon />
-                  </Avatar>
-                </ListItemAvatar>
-                <ListItemText
-                  primary="Global Chat"
-                  secondary={`${completedCount} document${completedCount > 1 ? 's' : ''} • Search everything`}
-                  primaryTypographyProps={{ fontWeight: 'bold' }}
-                  secondaryTypographyProps={{ color: 'white', opacity: 0.9 }}
-                />
+              <ListItem disablePadding>
+                <ListItemButton
+                  onClick={() => {
+                    const completed = allFiles.filter(f => f.status === 'completed');
+                    openChatForFiles(
+                      completed.map(f => f.file_id),
+                      completed.map(f => f.filename),
+                      true
+                    );
+                    setDrawerOpen(false);
+                  }}
+                  sx={{
+                    borderRadius: 2,
+                    mb: 2,
+                    bgcolor: 'primary.main',
+                    color: 'white',
+                    '&:hover': { bgcolor: 'primary.dark' },
+                  }}
+                >
+                  <ListItemAvatar>
+                    <Avatar sx={{ bgcolor: 'white', color: 'primary.main' }}>
+                      <LanguageIcon />
+                    </Avatar>
+                  </ListItemAvatar>
+                  <ListItemText
+                    primary="Global Chat"
+                    secondary={`${completedCount} document${completedCount > 1 ? 's' : ''} • Search everything`}
+                    primaryTypographyProps={{ fontWeight: 'bold' }}
+                    secondaryTypographyProps={{ color: 'white', sx: { opacity: 0.9 } }}
+                  />
+                </ListItemButton>
               </ListItem>
             )}
 
@@ -814,40 +810,40 @@ export default function Digitiser() {
               conversations
                 .filter(c => !c.isGlobal)
                 .map(conv => (
-                  <ListItem
-                    button
-                    key={conv.id}
-                    onClick={() => {
-                      openChatForFiles(conv.fileIds, conv.filenames);
-                      setDrawerOpen(false);
-                    }}
-                    sx={{
-                      borderRadius: 2,
-                      mb: 1,
-                      bgcolor: 'background.paper',
-                      boxShadow: 1,
-                      '&:hover': { boxShadow: 3 }
-                    }}
-                  >
-                    <ListItemAvatar>
-                      <Avatar sx={{ bgcolor: 'primary.main' }}>
-                        <DescriptionIcon />
-                      </Avatar>
-                    </ListItemAvatar>
-                    <ListItemText
-                      primary={`${conv.filenames.length} document${conv.filenames.length > 1 ? 's' : ''}`}
-                      secondary={
-                        <>
-                          <Typography component="span" variant="body2" color="text.primary" noWrap>
-                            {conv.preview}
-                          </Typography>
-                          <br />
-                          <Typography component="span" variant="caption" color="text.secondary">
-                            {formatRelativeTime(conv.lastUpdated)}
-                          </Typography>
-                        </>
-                      }
-                    />
+                  <ListItem key={conv.id} disablePadding>
+                    <ListItemButton
+                      onClick={() => {
+                        openChatForFiles(conv.fileIds, conv.filenames);
+                        setDrawerOpen(false);
+                      }}
+                      sx={{
+                        borderRadius: 2,
+                        mb: 1,
+                        bgcolor: 'background.paper',
+                        boxShadow: 1,
+                        '&:hover': { boxShadow: 3 }
+                      }}
+                    >
+                      <ListItemAvatar>
+                        <Avatar sx={{ bgcolor: 'primary.main' }}>
+                          <DescriptionIcon />
+                        </Avatar>
+                      </ListItemAvatar>
+                      <ListItemText
+                        primary={`${conv.filenames.length} document${conv.filenames.length > 1 ? 's' : ''}`}
+                        secondary={
+                          <>
+                            <Typography component="span" variant="body2" color="text.primary" noWrap>
+                              {conv.preview}
+                            </Typography>
+                            <br />
+                            <Typography component="span" variant="caption" color="text.secondary">
+                              {formatRelativeTime(conv.lastUpdated)}
+                            </Typography>
+                          </>
+                        }
+                      />
+                    </ListItemButton>
                   </ListItem>
                 ))
             )}
@@ -880,8 +876,8 @@ export default function Digitiser() {
               {currentConversationId === GLOBAL_CHAT_ID
                 ? `Global Chat • ${activeChatFilenames.length} documents`
                 : activeChatFilenames.length === 1
-                ? activeChatFilenames[0]
-                : `${activeChatFilenames.length} documents`}
+                  ? activeChatFilenames[0]
+                  : `${activeChatFilenames.length} documents`}
             </Typography>
             <Button
               startIcon={<SearchIcon />}
