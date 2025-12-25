@@ -147,6 +147,8 @@ const useDocumentManager = () => {
       }
 
       const data = await res.json();
+
+      // Update local upload with file_id and mark as pending
       setLocalUploads(prev =>
         prev.map(u =>
           u.file === file ? { ...u, file_id: data.file_id, status: 'pending', progress: 100 } : u
@@ -161,10 +163,9 @@ const useDocumentManager = () => {
         )
       );
     } finally {
-      setTimeout(() => {
-        setLocalUploads(prev => prev.filter(u => u.file !== file));
-        uploadNext();
-      }, 1000);
+      // Immediately remove from localUploads — server will show it via polling
+      setLocalUploads(prev => prev.filter(u => u.file !== file));
+      uploadNext();
     }
   }, []);
 
@@ -215,7 +216,7 @@ const useDocumentManager = () => {
       a.href = url;
       a.download =
         fileIds.length === 1
-          ? `clean_${uploadedFiles.find(f => f.file_id === fileIds[0])?.filename.replace('.pdf', '') || 'document'}.pdf`
+          ? `clean_${uploadedFiles.find(f => f.file_id === fileIds[0])?.filename || 'document.pdf'}`
           : `merged_clean_${fileIds.length}_docs.pdf`;
       a.click();
       URL.revokeObjectURL(url);
@@ -428,18 +429,27 @@ export default function Digitiser() {
   const [userMessage, setUserMessage] = useState('');
   const [filesToDelete, setFilesToDelete] = useState<string[]>([]);
 
-  // Combined file list
+  // === FIXED: Deduplicated file list to prevent duplicates ===
+  const serverFileMap = new Map<string, UploadedFile>();
+  uploadedFiles.forEach(f => serverFileMap.set(f.file_id, f));
+
+  const pendingLocalUploads = localUploads.filter(u => !u.file_id || !serverFileMap.has(u.file_id));
+
   const allFiles = [
     ...uploadedFiles.map(f => ({
-      ...f,
-      source: 'server' as const,
+      file_id: f.file_id,
+      filename: f.filename,
+      status: f.status as any,
+      created_at: f.created_at,
+      source: 'server',
     })),
-    ...localUploads.map(u => ({
-      file_id: u.file_id || `local-${Date.now()}`,
+    ...pendingLocalUploads.map((u, index) => ({
+      file_id: u.file_id || `local-${u.file.name}-${u.file.size}-${index}`,
       filename: u.file.name,
       status: u.status,
       created_at: new Date().toISOString(),
-      source: 'local' as const,
+      source: 'local',
+      error: u.error,
     })),
   ].sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime());
 
@@ -573,7 +583,8 @@ export default function Digitiser() {
                           color={getStatusColor(file.status)}
                           size="small"
                         />
-                        {file.status === 'uploading' && <LinearProgress />}
+                        {file.source === 'local' && file.status === 'uploading' && <LinearProgress />}
+                        {file.error && <Typography variant="caption" color="error">{file.error}</Typography>}
                       </Stack>
                     </TableCell>
                     <TableCell align="center">
@@ -648,7 +659,7 @@ export default function Digitiser() {
           </label>
           {localUploads.length > 0 && (
             <Typography variant="body2" color="text.secondary">
-              {localUploads.filter(u => u.status === 'uploading').length} file(s) uploading...
+              {localUploads.length} file(s) in queue...
             </Typography>
           )}
         </Stack>
@@ -780,11 +791,15 @@ export default function Digitiser() {
           </DialogContent>
           <DialogActions>
             <Button onClick={() => setDeleteDialogOpen(false)}>Cancel</Button>
-            <Button color="error" variant="contained" onClick={() => {
-              deleteFiles(filesToDelete);
-              setSelectedFileIds(new Set());
-              setDeleteDialogOpen(false);
-            }}>
+            <Button
+              color="error"
+              variant="contained"
+              onClick={() => {
+                deleteFiles(filesToDelete);
+                setSelectedFileIds(new Set());
+                setDeleteDialogOpen(false);
+              }}
+            >
               Delete
             </Button>
           </DialogActions>
@@ -800,10 +815,14 @@ export default function Digitiser() {
           </DialogContent>
           <DialogActions>
             <Button onClick={() => setClearChatDialogOpen(false)}>Cancel</Button>
-            <Button color="warning" variant="contained" onClick={() => {
-              clearChat();
-              setClearChatDialogOpen(false);
-            }}>
+            <Button
+              color="warning"
+              variant="contained"
+              onClick={() => {
+                clearChat();
+                setClearChatDialogOpen(false);
+              }}
+            >
               Clear Chat
             </Button>
           </DialogActions>

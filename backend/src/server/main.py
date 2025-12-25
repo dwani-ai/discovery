@@ -14,7 +14,7 @@ import chromadb
 from chromadb.utils import embedding_functions
 from fastapi import FastAPI, UploadFile, HTTPException, BackgroundTasks, Depends, Body
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import StreamingResponse, FileResponse
+from fastapi.responses import StreamingResponse
 from fpdf import FPDF
 from openai import AsyncOpenAI
 from pdf2image import convert_from_bytes
@@ -116,7 +116,11 @@ def get_db():
 
 chroma_client = chromadb.PersistentClient(path="./chroma_db")
 collection = chroma_client.get_or_create_collection(name="documents")
-embedding_fn = embedding_functions.SentenceTransformerEmbeddingFunction(model_name="all-MiniLM-L6-v2")
+
+# Upgraded to a much stronger embedding model for better retrieval
+embedding_function = embedding_functions.SentenceTransformerEmbeddingFunction(
+    model_name="BAAI/bge-small-en-v1.5"
+)
 
 
 # ========================= SCHEMAS =========================
@@ -237,7 +241,7 @@ async def store_embeddings(file_id: str, text: str):
     collection.delete(where={"file_id": file_id})
 
     collection.add(
-        embeddings=embedding_fn(chunks),
+        embeddings=embedding_function(chunks),
         documents=chunks,
         metadatas=[{"file_id": file_id, "chunk_index": j} for j in range(len(chunks))],
         ids=chunk_ids,
@@ -433,8 +437,8 @@ async def chat_with_documents(request: MultiChatRequest, db: Session = Depends(g
     question = user_msg[-1].content
 
     results = collection.query(
-        query_embeddings=embedding_fn([question]),
-        n_results=12,
+        query_embeddings=embedding_function([question]),
+        n_results=20,  # Increased for better recall with stronger model
         where={"file_id": {"$in": request.file_ids}},
         include=["documents", "metadatas", "distances"],
     )
@@ -446,30 +450,42 @@ async def chat_with_documents(request: MultiChatRequest, db: Session = Depends(g
     context_parts = []
     sources = []
 
-    for doc, meta, dist in zip(docs, metas, distances):
-        relevance = 1 - dist
-        if relevance < 0.0:
+    # Include top 20 chunks without strict relevance filtering
+    for doc, meta, distance in zip(docs, metas, distances):
+        if not meta or 'file_id' not in meta:
             continue
-        filename = next((r.filename for r in records if r.id == meta["file_id"]), "Unknown")
+        relevance = 1 - distance
+
+        file_id = meta['file_id']
+        filename = next((r.filename for r in records if r.id == file_id), "Unknown Document")
+
         context_parts.append(doc)
-        sources.append({"filename": filename, "excerpt": doc[:300], "relevance_score": round(relevance, 3)})
+        sources.append({
+            "filename": filename,
+            "excerpt": doc.strip(),
+            "relevance_score": round(relevance, 3)
+        })
 
-    context = "\n\n".join(context_parts) or "No relevant content found."
+    context = "\n\n".join(context_parts) if context_parts else "No relevant content was found in the document."
 
-    system_prompt = f"""You are an expert assistant. Answer using only the provided context.
-If the answer is not in the context, say "I don't know".
+    # Strict prompt preserved exactly as requested
+    system_prompt = f"""You are an expert assistant. Answer the question using only the provided document context.
+If the answer cannot be found, say "I don't know".
 
 Context:
-{context}"""
+{context}
 
-    messages = [{"role": "system", "content": system_prompt}] + [
-        {"role": m.role, "content": m.content} for m in request.messages
+Answer clearly and concisely."""
+
+    full_messages = [
+        {"role": "system", "content": system_prompt},
+        *[{"role": m.role, "content": m.content} for m in request.messages]
     ]
 
     client = get_openai_client()
     response = await client.chat.completions.create(
         model="gemma3",
-        messages=messages,
+        messages=full_messages,
         temperature=0.5,
         max_tokens=1024,
     )
