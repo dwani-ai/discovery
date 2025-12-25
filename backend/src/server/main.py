@@ -20,7 +20,7 @@ from openai import AsyncOpenAI
 from pdf2image import convert_from_bytes
 from PIL import Image
 from pydantic import BaseModel
-from rank_bm25 import BM25Okapi  # pip install rank-bm25
+from rank_bm25 import BM25Okapi
 from sqlalchemy import Column, String, Text, DateTime, create_engine
 from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy.orm import sessionmaker, Session
@@ -59,12 +59,22 @@ FONT_PATH = os.path.join(os.path.dirname(__file__), "fonts", "DejaVuSans.ttf")
 if not os.path.exists(FONT_PATH):
     logger.warning("DejaVuSans.ttf not found – PDF regeneration will fail until added.")
 
+# ========================= GLOBAL CONFIGURABLE TOKEN LIMITS =========================
+
+# Maximum tokens allowed for retrieved context (safe buffer below model context window)
+# Current model (gemma3): 16384 tokens → safe context ~12k
+# Increase this when switching to larger context models (e.g., 32k, 128k)
+MAX_CONTEXT_TOKENS = 12000
+
+# Maximum tokens reserved for recent chat history
+MAX_HISTORY_TOKENS = 3000
+
 # ========================= FASTAPI APP =========================
 
 app = FastAPI(
     title="dwani.ai API",
     description="Privacy-focused multimodal document extraction, regeneration, and hybrid RAG API",
-    version="1.2.0",
+    version="1.2.1",
 )
 
 app.add_middleware(
@@ -171,7 +181,6 @@ def clean_text(text: str) -> str:
 def chunk_text_with_pages(page_texts: List[str], chunk_size: int = 800, overlap: int = 100) -> List[Dict]:
     chunks = []
     words_buffer = []
-    current_pages = set()
 
     for page_num, page_text in enumerate(page_texts, start=1):
         page_words = page_text.split()
@@ -339,7 +348,6 @@ async def background_extraction_task(file_id: str, pdf_bytes: bytes, filename: s
 # ========================= HYBRID SEARCH HELPERS =========================
 
 def reciprocal_rank_fusion(results: List[Tuple[int, float]], k: int = 60) -> List[int]:
-    """Simple RRF fusion"""
     score_dict = {}
     for rank_offset, (doc_idx, _) in enumerate(results):
         rank = rank_offset + 1
@@ -483,9 +491,9 @@ async def chat_with_documents(request: MultiChatRequest, db: Session = Depends(g
     user_msg = [m for m in request.messages if m.role == "user"]
     if not user_msg:
         raise HTTPException(status_code=400, detail="No user question")
-    question = user_msg[-1].content.lower()  # BM25 is case-insensitive
+    question = user_msg[-1].content.lower()
 
-    # === Vector (Semantic) Search ===
+    # === Hybrid Search ===
     vector_results = collection.query(
         query_embeddings=embedding_function([question]),
         n_results=20,
@@ -499,7 +507,6 @@ async def chat_with_documents(request: MultiChatRequest, db: Session = Depends(g
 
     vector_ranked = [(i, dist) for i, dist in enumerate(vector_distances)]
 
-    # === Keyword (BM25) Search ===
     all_chunks = [d for d in vector_docs]
     bm25 = BM25Okapi([doc.lower().split() for doc in all_chunks])
     tokenized_query = question.split()
@@ -507,29 +514,35 @@ async def chat_with_documents(request: MultiChatRequest, db: Session = Depends(g
     bm25_ranked = [(i, -score) for i, score in enumerate(bm25_scores) if score > 0]
     bm25_ranked.sort(key=lambda x: x[1], reverse=True)
 
-    # === Hybrid Fusion via RRF ===
     all_ranked_pairs = vector_ranked + bm25_ranked
     fused_indices = reciprocal_rank_fusion(all_ranked_pairs)[:20]
 
-    # === Build final context and sources ===
+    # === Build context with token limit control ===
     context_parts = []
     sources = []
+    current_token_count = 0
 
     for idx in fused_indices:
         if idx >= len(vector_docs):
             continue
-        doc = vector_docs[idx]
-        meta = vector_metas[idx]
 
+        doc = vector_docs[idx]
+        estimated_tokens = len(doc.split()) * 1.3
+
+        if current_token_count + estimated_tokens > MAX_CONTEXT_TOKENS:
+            break
+
+        context_parts.append(doc)
+        current_token_count += estimated_tokens
+
+        meta = vector_metas[idx]
         filename = meta.get("filename", "Unknown Document")
         page_start = meta.get("page_start")
         page_end = meta.get("page_end")
-
         page_citation = f"Page {page_start}"
         if page_end != page_start:
             page_citation = f"Pages {page_start}–{page_end}"
 
-        context_parts.append(doc)
         sources.append({
             "filename": filename,
             "page": page_citation,
@@ -538,6 +551,17 @@ async def chat_with_documents(request: MultiChatRequest, db: Session = Depends(g
         })
 
     context = "\n\n".join(context_parts) if context_parts else "No relevant content was found in the document."
+
+    # === Trim conversation history ===
+    recent_messages = []
+    history_token_estimate = 0
+
+    for msg in reversed(request.messages[-12:]):  # Keep last ~6 turns
+        msg_tokens = len(msg.content.split()) * 1.3
+        if history_token_estimate + msg_tokens > MAX_HISTORY_TOKENS:
+            break
+        recent_messages.insert(0, msg)
+        history_token_estimate += msg_tokens
 
     system_prompt = f"""You are an expert assistant. Answer the question using only the provided document context.
 If the answer cannot be found, say "I don't know".
@@ -549,31 +573,35 @@ Answer clearly and concisely."""
 
     full_messages = [
         {"role": "system", "content": system_prompt},
-        *[{"role": m.role, "content": m.content} for m in request.messages]
+        *[{"role": m.role, "content": m.content} for m in recent_messages]
     ]
 
-    client = get_openai_client()
-    response = await client.chat.completions.create(
-        model="gemma3",
-        messages=full_messages,
-        temperature=0.5,
-        max_tokens=1024,
-    )
+    try:
+        client = get_openai_client()
+        response = await client.chat.completions.create(
+            model="gemma3",
+            messages=full_messages,
+            temperature=0.5,
+            max_tokens=1024,
+        )
 
-    sources.sort(key=lambda x: x["relevance_score"], reverse=True)
+        sources.sort(key=lambda x: x["relevance_score"], reverse=True)
 
-    return {
-        "answer": response.choices[0].message.content.strip(),
-        "sources": [
-            {
-                "filename": s["filename"],
-                "page": s["page"],
-                "excerpt": s["excerpt"][:500],
-                "relevance_score": s["relevance_score"]
-            }
-            for s in sources[:5]
-        ]
-    }
+        return {
+            "answer": response.choices[0].message.content.strip(),
+            "sources": [
+                {
+                    "filename": s["filename"],
+                    "page": s["page"],
+                    "excerpt": s["excerpt"][:500],
+                    "relevance_score": s["relevance_score"]
+                }
+                for s in sources[:5]
+            ]
+        }
+    except Exception as e:
+        logger.error(f"LLM call failed: {e}")
+        raise HTTPException(status_code=500, detail="Failed to generate response")
 
 
 @app.delete("/files/{file_id}", tags=["Files"])

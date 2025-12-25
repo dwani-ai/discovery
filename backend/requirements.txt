@@ -17,3 +17,4 @@ pdf2image
 fpdf2
 chromadb
 sentence-transformers
+rank-bm25
