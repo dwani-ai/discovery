@@ -8,7 +8,7 @@ import os
 import uuid
 from datetime import datetime
 from io import BytesIO
-from typing import List, Optional, Dict
+from typing import List, Optional, Dict, Tuple
 
 import chromadb
 from chromadb.utils import embedding_functions
@@ -20,6 +20,7 @@ from openai import AsyncOpenAI
 from pdf2image import convert_from_bytes
 from PIL import Image
 from pydantic import BaseModel
+from rank_bm25 import BM25Okapi  # pip install rank-bm25
 from sqlalchemy import Column, String, Text, DateTime, create_engine
 from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy.orm import sessionmaker, Session
@@ -62,8 +63,8 @@ if not os.path.exists(FONT_PATH):
 
 app = FastAPI(
     title="dwani.ai API",
-    description="Privacy-focused multimodal document extraction, regeneration, and RAG API with page-level citations",
-    version="1.1.0",
+    description="Privacy-focused multimodal document extraction, regeneration, and hybrid RAG API",
+    version="1.2.0",
 )
 
 app.add_middleware(
@@ -95,7 +96,7 @@ class FileRecord(Base):
     filename = Column(String, index=True)
     content_type = Column(String)
     status = Column(String, default=FileStatus.PENDING)
-    extracted_text = Column(Text, nullable=True)  # Full text (kept for regenerated PDF)
+    extracted_text = Column(Text, nullable=True)
     error_message = Column(Text, nullable=True)
     created_at = Column(DateTime, default=datetime.utcnow)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
@@ -112,12 +113,11 @@ def get_db():
         db.close()
 
 
-# ========================= VECTOR STORE =========================
+# ========================= VECTOR STORE & BM25 =========================
 
 chroma_client = chromadb.PersistentClient(path="./chroma_db")
 collection = chroma_client.get_or_create_collection(name="documents")
 
-# Best-in-class small embedding model
 embedding_function = embedding_functions.SentenceTransformerEmbeddingFunction(
     model_name="BAAI/bge-small-en-v1.5"
 )
@@ -169,14 +169,9 @@ def clean_text(text: str) -> str:
 
 
 def chunk_text_with_pages(page_texts: List[str], chunk_size: int = 800, overlap: int = 100) -> List[Dict]:
-    """
-    Chunk text while preserving page boundaries and returning metadata with page numbers.
-    Returns list of dicts: {'text': str, 'page_start': int, 'page_end': int}
-    """
     chunks = []
-    current_chunk = ""
-    current_pages = set()
     words_buffer = []
+    current_pages = set()
 
     for page_num, page_text in enumerate(page_texts, start=1):
         page_words = page_text.split()
@@ -193,10 +188,8 @@ def chunk_text_with_pages(page_texts: List[str], chunk_size: int = 800, overlap:
                 'page_end': max(pages_in_chunk)
             })
 
-            # Overlap: keep last `overlap` words for next chunk
             words_buffer = words_buffer[chunk_size - overlap:]
 
-    # Final chunk
     if words_buffer:
         chunk_text = " ".join(word for word, _ in words_buffer)
         pages_in_chunk = {page for _, page in words_buffer}
@@ -233,7 +226,6 @@ def get_openai_client(model: str = "gemma3") -> AsyncOpenAI:
 # ========================= SERVICES =========================
 
 async def extract_text_from_images_per_page(images: List[Image.Image]) -> List[str]:
-    """Extract text from each page individually and return list of page texts"""
     client = get_openai_client()
     page_texts = []
 
@@ -333,7 +325,7 @@ async def background_extraction_task(file_id: str, pdf_bytes: bytes, filename: s
         db.commit()
 
         await store_embeddings_with_pages(file_id, filename, page_texts)
-        logger.info(f"Page-aware extraction completed for {filename} ({len(page_texts)} pages)")
+        logger.info(f"Hybrid-ready extraction completed for {filename} ({len(page_texts)} pages)")
 
     except Exception as e:
         file_record.status = FileStatus.FAILED
@@ -342,6 +334,18 @@ async def background_extraction_task(file_id: str, pdf_bytes: bytes, filename: s
     finally:
         file_record.updated_at = datetime.utcnow()
         db.commit()
+
+
+# ========================= HYBRID SEARCH HELPERS =========================
+
+def reciprocal_rank_fusion(results: List[Tuple[int, float]], k: int = 60) -> List[int]:
+    """Simple RRF fusion"""
+    score_dict = {}
+    for rank_offset, (doc_idx, _) in enumerate(results):
+        rank = rank_offset + 1
+        score_dict[doc_idx] = score_dict.get(doc_idx, 0) + 1 / (k + rank)
+
+    return sorted(score_dict.keys(), key=lambda i: score_dict[i], reverse=True)
 
 
 # ========================= ROUTES =========================
@@ -479,26 +483,43 @@ async def chat_with_documents(request: MultiChatRequest, db: Session = Depends(g
     user_msg = [m for m in request.messages if m.role == "user"]
     if not user_msg:
         raise HTTPException(status_code=400, detail="No user question")
-    question = user_msg[-1].content
+    question = user_msg[-1].content.lower()  # BM25 is case-insensitive
 
-    results = collection.query(
+    # === Vector (Semantic) Search ===
+    vector_results = collection.query(
         query_embeddings=embedding_function([question]),
         n_results=20,
         where={"file_id": {"$in": request.file_ids}},
         include=["documents", "metadatas", "distances"],
     )
 
-    docs = results["documents"][0] if results["documents"] else []
-    metas = results["metadatas"][0] if results["metadatas"] else []
-    distances = results["distances"][0] if results["distances"] else []
+    vector_docs = vector_results["documents"][0] if vector_results["documents"] else []
+    vector_metas = vector_results["metadatas"][0] if vector_results["metadatas"] else []
+    vector_distances = vector_results["distances"][0] if vector_results["distances"] else []
 
+    vector_ranked = [(i, dist) for i, dist in enumerate(vector_distances)]
+
+    # === Keyword (BM25) Search ===
+    all_chunks = [d for d in vector_docs]
+    bm25 = BM25Okapi([doc.lower().split() for doc in all_chunks])
+    tokenized_query = question.split()
+    bm25_scores = bm25.get_scores(tokenized_query)
+    bm25_ranked = [(i, -score) for i, score in enumerate(bm25_scores) if score > 0]
+    bm25_ranked.sort(key=lambda x: x[1], reverse=True)
+
+    # === Hybrid Fusion via RRF ===
+    all_ranked_pairs = vector_ranked + bm25_ranked
+    fused_indices = reciprocal_rank_fusion(all_ranked_pairs)[:20]
+
+    # === Build final context and sources ===
     context_parts = []
     sources = []
 
-    for doc, meta, distance in zip(docs, metas, distances):
-        if not meta:
+    for idx in fused_indices:
+        if idx >= len(vector_docs):
             continue
-        relevance = 1 - distance
+        doc = vector_docs[idx]
+        meta = vector_metas[idx]
 
         filename = meta.get("filename", "Unknown Document")
         page_start = meta.get("page_start")
@@ -511,9 +532,9 @@ async def chat_with_documents(request: MultiChatRequest, db: Session = Depends(g
         context_parts.append(doc)
         sources.append({
             "filename": filename,
-            "page_citation": page_citation,
+            "page": page_citation,
             "excerpt": doc.strip(),
-            "relevance_score": round(relevance, 3)
+            "relevance_score": round(1 - vector_distances[idx] if idx < len(vector_distances) else 0.5, 3)
         })
 
     context = "\n\n".join(context_parts) if context_parts else "No relevant content was found in the document."
@@ -539,7 +560,6 @@ Answer clearly and concisely."""
         max_tokens=1024,
     )
 
-    # Sort sources by relevance
     sources.sort(key=lambda x: x["relevance_score"], reverse=True)
 
     return {
@@ -547,7 +567,7 @@ Answer clearly and concisely."""
         "sources": [
             {
                 "filename": s["filename"],
-                "page": s["page_citation"],
+                "page": s["page"],
                 "excerpt": s["excerpt"][:500],
                 "relevance_score": s["relevance_score"]
             }
