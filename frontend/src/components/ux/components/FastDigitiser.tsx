@@ -10,6 +10,7 @@ import Chip from '@mui/material/Chip';
 import Dialog from '@mui/material/Dialog';
 import DialogActions from '@mui/material/DialogActions';
 import DialogContent from '@mui/material/DialogContent';
+import DialogContentText from '@mui/material/DialogContentText';
 import DialogTitle from '@mui/material/DialogTitle';
 import TextField from '@mui/material/TextField';
 import List from '@mui/material/List';
@@ -39,6 +40,7 @@ import MenuIcon from '@mui/icons-material/Menu';
 import DescriptionIcon from '@mui/icons-material/Description';
 import UploadFileIcon from '@mui/icons-material/UploadFile';
 import PictureAsPdfIcon from '@mui/icons-material/PictureAsPdf';
+import DeleteIcon from '@mui/icons-material/Delete';
 
 import Highlight from 'react-highlight-words';
 
@@ -103,10 +105,14 @@ export default function Digitiser() {
   const [activeChatFileIds, setActiveChatFileIds] = useState<string[]>([]);
   const [activeChatFilenames, setActiveChatFilenames] = useState<string[]>([]);
 
+  // Delete confirmation
+  const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
+  const [filesToDelete, setFilesToDelete] = useState<string[]>([]);
+
   const API_BASE = import.meta.env.VITE_DWANI_API_BASE_URL || 'https://discovery-server.dwani.ai';
   const API_KEY = import.meta.env.VITE_DWANI_API_KEY;
 
-  // Load conversations from localStorage
+  // Load conversations
   useEffect(() => {
     const saved = localStorage.getItem(STORAGE_KEY);
     if (saved) {
@@ -119,14 +125,14 @@ export default function Digitiser() {
     }
   }, []);
 
-  // Save conversations whenever they change
+  // Save conversations
   useEffect(() => {
     if (conversations.length > 0) {
       localStorage.setItem(STORAGE_KEY, JSON.stringify(conversations));
     }
   }, [conversations]);
 
-  // Fetch uploaded files + periodic refresh
+  // Fetch files
   const fetchUploadedFiles = async () => {
     setFilesLoading(true);
     try {
@@ -189,7 +195,7 @@ export default function Digitiser() {
     return new Date(timestamp).toLocaleDateString();
   };
 
-  // Multiple file upload handling
+  // Multiple file upload
   const handleFileChange = (event: React.ChangeEvent<HTMLInputElement>) => {
     const files = event.target.files;
     if (!files || files.length === 0) return;
@@ -261,7 +267,7 @@ export default function Digitiser() {
     }
   };
 
-  // Generate merged (or single) clean PDF from selected files
+  // Generate clean/merged PDF
   const handleGenerateMergedPdf = async () => {
     const selectedCompleted = allFiles
       .filter(f => selectedFileIds.has(f.file_id) && f.status === 'completed');
@@ -313,6 +319,53 @@ export default function Digitiser() {
     } catch (err) {
       alert(err instanceof Error ? err.message : 'Failed to generate PDF');
     }
+  };
+
+  // Delete files
+  const handleDeleteFiles = async () => {
+    if (filesToDelete.length === 0) return;
+
+    try {
+      const deletePromises = filesToDelete.map(fileId =>
+        fetch(`${API_BASE}/files/${fileId}`, {
+          method: 'DELETE',
+          headers: {
+            'X-API-KEY': API_KEY || '',
+          },
+        })
+      );
+
+      const results = await Promise.all(deletePromises);
+      const failed = results.filter(r => !r.ok);
+
+      if (failed.length > 0) {
+        alert(`${failed.length} file(s) could not be deleted.`);
+      }
+
+      // Update UI
+      setUploadedFiles(prev => prev.filter(f => !filesToDelete.includes(f.file_id)));
+      setSelectedFileIds(prev => {
+        const newSet = new Set(prev);
+        filesToDelete.forEach(id => newSet.delete(id));
+        return newSet;
+      });
+
+      // Remove affected conversations
+      setConversations(prev => prev.filter(conv =>
+        !conv.fileIds.some(id => filesToDelete.includes(id))
+      ));
+
+    } catch (err) {
+      alert('Error deleting files. Please try again.');
+    } finally {
+      setDeleteDialogOpen(false);
+      setFilesToDelete([]);
+    }
+  };
+
+  const openDeleteDialog = (fileIds: string[]) => {
+    setFilesToDelete(fileIds);
+    setDeleteDialogOpen(true);
   };
 
   const toggleDrawer = () => setDrawerOpen(prev => !prev);
@@ -438,7 +491,7 @@ export default function Digitiser() {
     }
   };
 
-  // Combine server files + local uploads for unified display
+  // Combined files list
   const allFiles = [
     ...uploadedFiles.map(f => ({ ...f, source: 'server' as const })),
     ...localUploads.map(u => ({
@@ -466,7 +519,6 @@ export default function Digitiser() {
       minHeight: '100vh',
       bgcolor: 'background.default',
     }}>
-      {/* Header */}
       <Stack direction="row" spacing={2} alignItems="center" sx={{ width: { xs: '100%', sm: '90%', md: '1000px' }, mb: 4 }}>
         <IconButton onClick={toggleDrawer} size="large" edge="start">
           <MenuIcon />
@@ -476,7 +528,7 @@ export default function Digitiser() {
 
       <Stack spacing={5} sx={{ width: { xs: '100%', sm: '90%', md: '1000px' } }}>
 
-        {/* Selection Actions Bar */}
+        {/* Selection Action Bar */}
         {selectedFileIds.size > 0 && (
           <Alert
             severity="info"
@@ -491,6 +543,16 @@ export default function Digitiser() {
                   disabled={selectedCompletedCount === 0}
                 >
                   Generate PDF ({selectedCompletedCount})
+                </Button>
+                <Button
+                  color="inherit"
+                  size="small"
+                  variant="outlined"
+                  startIcon={<DeleteIcon />}
+                  onClick={() => openDeleteDialog(Array.from(selectedFileIds))}
+                  disabled={selectedFileIds.size === 0}
+                >
+                  Delete ({selectedFileIds.size})
                 </Button>
                 <Button
                   color="inherit"
@@ -531,7 +593,7 @@ export default function Digitiser() {
                   <TableCell sx={{ bgcolor: 'background.paper', fontWeight: 'bold' }}>Filename</TableCell>
                   <TableCell sx={{ bgcolor: 'background.paper', fontWeight: 'bold' }}>Uploaded</TableCell>
                   <TableCell sx={{ bgcolor: 'background.paper', fontWeight: 'bold' }}>Status</TableCell>
-                  <TableCell align="center" sx={{ bgcolor: 'background.paper', fontWeight: 'bold' }}>Action</TableCell>
+                  <TableCell align="center" sx={{ bgcolor: 'background.paper', fontWeight: 'bold' }}>Actions</TableCell>
                 </TableRow>
               </TableHead>
               <TableBody>
@@ -578,14 +640,25 @@ export default function Digitiser() {
                         </Stack>
                       </TableCell>
                       <TableCell align="center">
-                        <Button
-                          variant="outlined"
-                          size="small"
-                          onClick={() => openChatForFiles([doc.file_id], [doc.filename])}
-                          disabled={doc.status !== 'completed'}
-                        >
-                          Chat
-                        </Button>
+                        <Stack direction="row" spacing={1} justifyContent="center">
+                          <Button
+                            variant="outlined"
+                            size="small"
+                            onClick={() => openChatForFiles([doc.file_id], [doc.filename])}
+                            disabled={doc.status !== 'completed'}
+                          >
+                            Chat
+                          </Button>
+                          {doc.source === 'server' && doc.status === 'completed' && (
+                            <IconButton
+                              size="small"
+                              color="error"
+                              onClick={() => openDeleteDialog([doc.file_id])}
+                            >
+                              <DeleteIcon fontSize="small" />
+                            </IconButton>
+                          )}
+                        </Stack>
                       </TableCell>
                     </TableRow>
                   ))
@@ -692,6 +765,23 @@ export default function Digitiser() {
         </Box>
       </Drawer>
 
+      {/* Delete Confirmation Dialog */}
+      <Dialog open={deleteDialogOpen} onClose={() => setDeleteDialogOpen(false)}>
+        <DialogTitle>Confirm Deletion</DialogTitle>
+        <DialogContent>
+          <DialogContentText>
+            Are you sure you want to delete {filesToDelete.length} document{filesToDelete.length > 1 ? 's' : ''}?
+            This action cannot be undone.
+          </DialogContentText>
+        </DialogContent>
+        <DialogActions>
+          <Button onClick={() => setDeleteDialogOpen(false)}>Cancel</Button>
+          <Button onClick={handleDeleteFiles} color="error" variant="contained">
+            Delete Permanently
+          </Button>
+        </DialogActions>
+      </Dialog>
+
       {/* Chat Dialog */}
       <Dialog open={chatOpen} onClose={handleCloseChat} maxWidth="md" fullWidth>
         <DialogTitle>
@@ -727,7 +817,7 @@ export default function Digitiser() {
                     highlightClassName="search-highlight"
                     searchWords={[searchQuery.trim()]}
                     autoEscape
-                    textToHighlight="Full text search will be enhanced in future updates"
+                    textToHighlight="Full document text search coming soon..."
                   />
                 </Typography>
               )}
