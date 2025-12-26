@@ -56,3 +56,61 @@ def sample_pdf_bytes():
     pdf.cell(200, 10, txt="Test PDF for OCR", ln=1)
     output = pdf.output()
     return output
+
+# tests/conftest.py (add these fixtures)
+
+import pytest
+import respx
+from httpx import Response
+from config.settings import settings
+
+@pytest.fixture
+def mock_llm_router():
+    """Mock all calls to the local LLM endpoint"""
+    with respx.mock(base_url=settings.DWANI_API_BASE_URL, assert_all_mocked=True) as router:
+        yield router
+
+@pytest.fixture
+def mock_ocr_response(mock_llm_router):
+    """Mock successful OCR response for one page"""
+    mock_llm_router.post("/chat/completions").respond(
+        status_code=200,
+        json={
+            "choices": [
+                {
+                    "message": {
+                        "content": "This is extracted text from page 1.\n\nKey points: Test document."
+                    }
+                }
+            ]
+        }
+    )
+
+@pytest.fixture
+def mock_chat_response(mock_llm_router, request):
+    """Parametrized mock for general chat completions (e.g. final answer)"""
+    content = getattr(request, "param", "This is a helpful answer based on the documents.")
+    mock_llm_router.post("/chat/completions").respond(
+        status_code=200,
+        json={
+            "choices": [{"message": {"content": content}}]
+        }
+    )
+
+@pytest.fixture
+def mock_contradiction_none(mock_llm_router):
+    mock_llm_router.post("/chat/completions").respond(
+        status_code=200,
+        json={
+            "choices": [{"message": {"content": "No contradictions detected."}}]
+        }
+    )
+
+@pytest.fixture
+def mock_contradiction_found(mock_llm_router):
+    mock_llm_router.post("/chat/completions").respond(
+        status_code=200,
+        json={
+            "choices": [{"message": {"content": "The salary in Doc1 is $100k, but Doc2 says $120k."}}]
+        }
+    )
