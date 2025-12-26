@@ -1,0 +1,7 @@
+pytest
+pytest-asyncio
+testcontainers[postgresql]
+respx
+httpx
+sqlalchemy[asyncio]
+chromadb

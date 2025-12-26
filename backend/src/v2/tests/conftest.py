@@ -114,3 +114,78 @@ def mock_contradiction_found(mock_llm_router):
             "choices": [{"message": {"content": "The salary in Doc1 is $100k, but Doc2 says $120k."}}]
         }
     )
+
+# tests/conftest.py
+
+import pytest
+import asyncio
+from fastapi.testclient import TestClient
+from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine
+from sqlalchemy.orm import sessionmaker
+from httpx import AsyncClient
+import respx
+from pathlib import Path
+import tempfile
+import shutil
+
+from main import app
+from database.models import Base, create_tables
+from database.session import get_db
+from config.settings import settings
+
+# Use a temporary directory for Chroma persistence across tests
+@pytest.fixture(scope="session")
+def temp_chroma_dir():
+    dir_path = Path(tempfile.mkdtemp(prefix="chroma_test_"))
+    yield dir_path
+    shutil.rmtree(dir_path)
+
+@pytest.fixture(scope="session")
+def override_chroma_path(monkeypatch, temp_chroma_dir):
+    # Override Chroma client path
+    from vectorstore import chroma
+    monkeypatch.setattr(chroma, "client", chromadb.PersistentClient(path=str(temp_chroma_dir)))
+    monkeypatch.setattr(chroma, "collection", chroma.client.get_or_create_collection(name="documents"))
+
+@pytest.fixture(scope="session")
+def async_engine():
+    # Use real SQLite file for persistence across async calls
+    engine = create_async_engine("sqlite+aiosqlite:///./test_files.db")
+    yield engine
+    # Cleanup
+    import os
+    if os.path.exists("./test_files.db"):
+        os.remove("./test_files.db")
+
+@pytest.fixture(scope="session")
+async def async_session(async_engine):
+    AsyncSessionLocal = sessionmaker(bind=async_engine, class_=AsyncSession, expire_on_commit=False)
+    
+    async with async_engine.begin() as conn:
+        await conn.run_sync(Base.metadata.create_all)
+
+    async def override_get_db():
+        async with AsyncSessionLocal() as session:
+            yield session
+
+    app.dependency_overrides[get_db] = override_get_db
+    yield AsyncSessionLocal
+
+    app.dependency_overrides.clear()
+    async with async_engine.begin() as conn:
+        await conn.run_sync(Base.metadata.drop_all)
+
+@pytest.fixture
+async def async_client(async_session, override_chroma_path):
+    async with AsyncClient(app=app, base_url="http://test") as client:
+        yield client
+
+@pytest.fixture
+def mock_llm(respx_mock):
+    """Global LLM mock for all integration tests"""
+    respx_mock.post(f"{settings.DWANI_API_BASE_URL}/chat/completions").mock(
+        return_value=httpx.Response(200, json={
+            "choices": [{"message": {"content": "Mocked extracted text from image."}}]
+        })
+    )
+    return respx_mock
