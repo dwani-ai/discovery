@@ -18,3 +18,6 @@ fpdf2
 chromadb
 sentence-transformers
 rank-bm25
+pytest 
+pytest-asyncio 
+httpx
