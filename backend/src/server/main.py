@@ -8,7 +8,7 @@ import os
 import uuid
 from datetime import datetime
 from io import BytesIO
-from typing import List, Optional, Dict
+from typing import List, Optional, Dict, Tuple
 
 import chromadb
 from chromadb.utils import embedding_functions
@@ -20,6 +20,7 @@ from openai import AsyncOpenAI
 from pdf2image import convert_from_bytes
 from PIL import Image
 from pydantic import BaseModel
+from rank_bm25 import BM25Okapi
 from sqlalchemy import Column, String, Text, DateTime, create_engine
 from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy.orm import sessionmaker, Session
@@ -58,17 +59,24 @@ FONT_PATH = os.path.join(os.path.dirname(__file__), "fonts", "DejaVuSans.ttf")
 if not os.path.exists(FONT_PATH):
     logger.warning("DejaVuSans.ttf not found – PDF regeneration will fail until added.")
 
+# ========================= TOKEN LIMITS (ENV CONFIGURABLE) =========================
+
+MAX_CONTEXT_TOKENS = int(os.getenv("MAX_CONTEXT_TOKENS", "12000"))
+MAX_HISTORY_TOKENS = int(os.getenv("MAX_HISTORY_TOKENS", "3000"))
+
+logger.info(f"Context limits: MAX_CONTEXT_TOKENS={MAX_CONTEXT_TOKENS}, MAX_HISTORY_TOKENS={MAX_HISTORY_TOKENS}")
+
 # ========================= FASTAPI APP =========================
 
 app = FastAPI(
     title="dwani.ai API",
-    description="Privacy-focused multimodal document extraction, regeneration, and RAG API with page-level citations",
-    version="1.1.0",
+    description="Privacy-focused multimodal document extraction, regeneration, and multi-document aware hybrid RAG API",
+    version="1.3.0",
 )
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["https://app.dwani.ai", "http://localhost:5173", "http://127.0.0.1:5173"],
+    allow_origins=["https://app.dwani.ai", "http://localhost:5173", "http://127.0.0.1:5173", "https://dwani,ai"],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -95,7 +103,7 @@ class FileRecord(Base):
     filename = Column(String, index=True)
     content_type = Column(String)
     status = Column(String, default=FileStatus.PENDING)
-    extracted_text = Column(Text, nullable=True)  # Full text (kept for regenerated PDF)
+    extracted_text = Column(Text, nullable=True)
     error_message = Column(Text, nullable=True)
     created_at = Column(DateTime, default=datetime.utcnow)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
@@ -117,7 +125,6 @@ def get_db():
 chroma_client = chromadb.PersistentClient(path="./chroma_db")
 collection = chroma_client.get_or_create_collection(name="documents")
 
-# Best-in-class small embedding model
 embedding_function = embedding_functions.SentenceTransformerEmbeddingFunction(
     model_name="BAAI/bge-small-en-v1.5"
 )
@@ -169,13 +176,7 @@ def clean_text(text: str) -> str:
 
 
 def chunk_text_with_pages(page_texts: List[str], chunk_size: int = 800, overlap: int = 100) -> List[Dict]:
-    """
-    Chunk text while preserving page boundaries and returning metadata with page numbers.
-    Returns list of dicts: {'text': str, 'page_start': int, 'page_end': int}
-    """
     chunks = []
-    current_chunk = ""
-    current_pages = set()
     words_buffer = []
 
     for page_num, page_text in enumerate(page_texts, start=1):
@@ -193,10 +194,8 @@ def chunk_text_with_pages(page_texts: List[str], chunk_size: int = 800, overlap:
                 'page_end': max(pages_in_chunk)
             })
 
-            # Overlap: keep last `overlap` words for next chunk
             words_buffer = words_buffer[chunk_size - overlap:]
 
-    # Final chunk
     if words_buffer:
         chunk_text = " ".join(word for word, _ in words_buffer)
         pages_in_chunk = {page for _, page in words_buffer}
@@ -233,7 +232,6 @@ def get_openai_client(model: str = "gemma3") -> AsyncOpenAI:
 # ========================= SERVICES =========================
 
 async def extract_text_from_images_per_page(images: List[Image.Image]) -> List[str]:
-    """Extract text from each page individually and return list of page texts"""
     client = get_openai_client()
     page_texts = []
 
@@ -333,7 +331,7 @@ async def background_extraction_task(file_id: str, pdf_bytes: bytes, filename: s
         db.commit()
 
         await store_embeddings_with_pages(file_id, filename, page_texts)
-        logger.info(f"Page-aware extraction completed for {filename} ({len(page_texts)} pages)")
+        logger.info(f"Extraction completed for {filename} ({len(page_texts)} pages)")
 
     except Exception as e:
         file_record.status = FileStatus.FAILED
@@ -342,6 +340,60 @@ async def background_extraction_task(file_id: str, pdf_bytes: bytes, filename: s
     finally:
         file_record.updated_at = datetime.utcnow()
         db.commit()
+
+
+# ========================= HYBRID SEARCH HELPERS =========================
+
+def reciprocal_rank_fusion(results: List[Tuple[int, float]], k: int = 60) -> List[int]:
+    score_dict = {}
+    for rank_offset, (doc_idx, _) in enumerate(results):
+        rank = rank_offset + 1
+        score_dict[doc_idx] = score_dict.get(doc_idx, 0) + 1 / (k + rank)
+
+    return sorted(score_dict.keys(), key=lambda i: score_dict[i], reverse=True)
+
+
+# ========================= MULTI-DOCUMENT CONTRADICTION DETECTION =========================
+
+async def detect_contradictions(question: str, sources: List[Dict]) -> Optional[str]:
+    if len(sources) < 2:
+        return None
+
+    doc_excerpts = {}
+    for s in sources:
+        filename = s["filename"]
+        if filename not in doc_excerpts:
+            doc_excerpts[filename] = []
+        doc_excerpts[filename].append(s["excerpt"])
+
+    contradiction_prompt = f"""You are an expert analyst. Review the following excerpts from different documents and the user's question.
+
+Question: {question}
+
+"""
+    for filename, excerpts in doc_excerpts.items():
+        contradiction_prompt += f"\n--- From {filename} ---\n" + "\n\n".join(excerpts[:3]) + "\n"
+
+    contradiction_prompt += """
+Are there any contradictions or conflicting information between the documents regarding the question?
+If yes, clearly state what contradicts what.
+If no clear contradiction, respond with "No contradictions detected."
+
+Respond in one short paragraph."""
+
+    try:
+        client = get_openai_client()
+        response = await client.chat.completions.create(
+            model="gemma3",
+            messages=[{"role": "user", "content": contradiction_prompt}],
+            temperature=0.3,
+            max_tokens=512,
+        )
+        result = response.choices[0].message.content.strip()
+        return result if "no contradictions" not in result.lower() else None
+    except Exception as e:
+        logger.warning(f"Contradiction detection failed: {e}")
+        return None
 
 
 # ========================= ROUTES =========================
@@ -479,81 +531,134 @@ async def chat_with_documents(request: MultiChatRequest, db: Session = Depends(g
     user_msg = [m for m in request.messages if m.role == "user"]
     if not user_msg:
         raise HTTPException(status_code=400, detail="No user question")
-    question = user_msg[-1].content
+    question = user_msg[-1].content.lower()
 
-    results = collection.query(
+    # === Hybrid Search ===
+    vector_results = collection.query(
         query_embeddings=embedding_function([question]),
         n_results=20,
         where={"file_id": {"$in": request.file_ids}},
         include=["documents", "metadatas", "distances"],
     )
 
-    docs = results["documents"][0] if results["documents"] else []
-    metas = results["metadatas"][0] if results["metadatas"] else []
-    distances = results["distances"][0] if results["distances"] else []
+    vector_docs = vector_results["documents"][0] if vector_results["documents"] else []
+    vector_metas = vector_results["metadatas"][0] if vector_results["metadatas"] else []
+    vector_distances = vector_results["distances"][0] if vector_results["distances"] else []
 
+    vector_ranked = [(i, dist) for i, dist in enumerate(vector_distances)]
+
+    all_chunks = [d for d in vector_docs]
+    bm25 = BM25Okapi([doc.lower().split() for doc in all_chunks])
+    tokenized_query = question.split()
+    bm25_scores = bm25.get_scores(tokenized_query)
+    bm25_ranked = [(i, -score) for i, score in enumerate(bm25_scores) if score > 0]
+    bm25_ranked.sort(key=lambda x: x[1], reverse=True)
+
+    all_ranked_pairs = vector_ranked + bm25_ranked
+    fused_indices = reciprocal_rank_fusion(all_ranked_pairs)[:20]
+
+    # === Build context with token limit ===
     context_parts = []
     sources = []
+    current_token_count = 0
 
-    for doc, meta, distance in zip(docs, metas, distances):
-        if not meta:
+    for idx in fused_indices:
+        if idx >= len(vector_docs):
             continue
-        relevance = 1 - distance
 
+        doc = vector_docs[idx]
+        estimated_tokens = len(doc.split()) * 1.3
+
+        if current_token_count + estimated_tokens > MAX_CONTEXT_TOKENS:
+            break
+
+        context_parts.append(doc)
+        current_token_count += estimated_tokens
+
+        meta = vector_metas[idx]
         filename = meta.get("filename", "Unknown Document")
         page_start = meta.get("page_start")
         page_end = meta.get("page_end")
-
         page_citation = f"Page {page_start}"
         if page_end != page_start:
             page_citation = f"Pages {page_start}–{page_end}"
 
-        context_parts.append(doc)
         sources.append({
             "filename": filename,
-            "page_citation": page_citation,
+            "page": page_citation,
             "excerpt": doc.strip(),
-            "relevance_score": round(relevance, 3)
+            "relevance_score": round(1 - vector_distances[idx] if idx < len(vector_distances) else 0.5, 3)
         })
 
     context = "\n\n".join(context_parts) if context_parts else "No relevant content was found in the document."
 
-    system_prompt = f"""You are an expert assistant. Answer the question using only the provided document context.
+    # === Multi-document aware system prompt ===
+    doc_list = ", ".join(set(s["filename"] for s in sources))
+    system_prompt = f"""You are an expert assistant analyzing multiple documents: {doc_list}.
+
+When answering:
+- Always explicitly mention which document each fact comes from (e.g., "According to Contract.pdf...", "The NDA states...").
+- If information differs between documents, clearly note it.
+- Be precise and cite page numbers when available.
+
 If the answer cannot be found, say "I don't know".
 
 Context:
 {context}
 
-Answer clearly and concisely."""
+Answer clearly and professionally."""
+
+    # === Trim conversation history ===
+    recent_messages = []
+    history_token_estimate = 0
+
+    for msg in reversed(request.messages[-12:]):
+        msg_tokens = len(msg.content.split()) * 1.3
+        if history_token_estimate + msg_tokens > MAX_HISTORY_TOKENS:
+            break
+        recent_messages.insert(0, msg)
+        history_token_estimate += msg_tokens
 
     full_messages = [
         {"role": "system", "content": system_prompt},
-        *[{"role": m.role, "content": m.content} for m in request.messages]
+        *[{"role": m.role, "content": m.content} for m in recent_messages]
     ]
 
-    client = get_openai_client()
-    response = await client.chat.completions.create(
-        model="gemma3",
-        messages=full_messages,
-        temperature=0.5,
-        max_tokens=1024,
-    )
+    try:
+        client = get_openai_client()
+        response = await client.chat.completions.create(
+            model="gemma3",
+            messages=full_messages,
+            temperature=0.5,
+            max_tokens=1024,
+        )
 
-    # Sort sources by relevance
-    sources.sort(key=lambda x: x["relevance_score"], reverse=True)
+        answer = response.choices[0].message.content.strip()
 
-    return {
-        "answer": response.choices[0].message.content.strip(),
-        "sources": [
-            {
-                "filename": s["filename"],
-                "page": s["page_citation"],
-                "excerpt": s["excerpt"][:500],
-                "relevance_score": s["relevance_score"]
-            }
-            for s in sources[:5]
-        ]
-    }
+        # === Detect contradictions ===
+        contradiction_warning = await detect_contradictions(question, sources[:10])
+
+        sources.sort(key=lambda x: x["relevance_score"], reverse=True)
+
+        final_answer = answer
+        if contradiction_warning:
+            final_answer = f"⚠️ **Potential Contradiction Detected**\n\n{contradiction_warning}\n\n**Answer:**\n{answer}"
+
+        return {
+            "answer": final_answer,
+            "sources": [
+                {
+                    "filename": s["filename"],
+                    "page": s["page"],
+                    "excerpt": s["excerpt"][:500],
+                    "relevance_score": s["relevance_score"]
+                }
+                for s in sources[:5]
+            ]
+        }
+    except Exception as e:
+        logger.error(f"LLM call failed: {e}")
+        raise HTTPException(status_code=500, detail="Failed to generate response")
 
 
 @app.delete("/files/{file_id}", tags=["Files"])

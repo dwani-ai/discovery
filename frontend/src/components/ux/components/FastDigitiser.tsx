@@ -72,7 +72,7 @@ interface LocalUpload {
 
 interface Source {
   filename: string;
-  page: string; // e.g., "Page 12" or "Pages 11–12"
+  page: string;
   excerpt: string;
   relevance_score: number;
 }
@@ -130,7 +130,7 @@ const useDocumentManager = () => {
     setIsUploading(true);
     const file = uploadQueueRef.current.shift()!;
 
-    setLocalUploads(prev => [...prev, { file, progress: 0, status: 'uploading' }]);
+    setLocalUploads(prev => [...prev, { file, progress: 0, status: 'uploading' as const }]);
 
     try {
       const formData = new FormData();
@@ -151,14 +151,14 @@ const useDocumentManager = () => {
 
       setLocalUploads(prev =>
         prev.map(u =>
-          u.file === file ? { ...u, file_id: data.file_id, status: 'pending', progress: 100 } : u
+          u.file === file ? { ...u, file_id: data.file_id, status: 'pending' as const, progress: 100 } : u
         )
       );
     } catch (err) {
       setLocalUploads(prev =>
         prev.map(u =>
           u.file === file
-            ? { ...u, status: 'failed', error: (err as Error).message }
+            ? { ...u, status: 'failed' as const, error: (err as Error).message }
             : u
         )
       );
@@ -176,7 +176,7 @@ const useDocumentManager = () => {
     uploadQueueRef.current = [...uploadQueueRef.current, ...pdfs];
     setLocalUploads(prev => [
       ...prev,
-      ...pdfs.map(f => ({ file: f, progress: 0, status: 'uploading' })),
+      ...pdfs.map(f => ({ file: f, progress: 0, status: 'uploading' as const })),
     ]);
     if (!isUploading) uploadNext();
   };
@@ -428,26 +428,35 @@ export default function Digitiser() {
   const [userMessage, setUserMessage] = useState('');
   const [filesToDelete, setFilesToDelete] = useState<string[]>([]);
 
-  // Deduplicated file list (no duplicates during upload)
+  // Deduplicated file list with proper type handling
   const serverFileMap = new Map<string, UploadedFile>();
   uploadedFiles.forEach(f => serverFileMap.set(f.file_id, f));
 
   const pendingLocalUploads = localUploads.filter(u => !u.file_id || !serverFileMap.has(u.file_id));
 
-  const allFiles = [
+  type TableFile = {
+    file_id: string;
+    filename: string;
+    status: 'pending' | 'processing' | 'completed' | 'failed' | 'uploading';
+    created_at: string;
+    source: 'server' | 'local';
+    error?: string;
+  };
+
+  const allFiles: TableFile[] = [
     ...uploadedFiles.map(f => ({
       file_id: f.file_id,
       filename: f.filename,
-      status: f.status as any,
+      status: f.status,
       created_at: f.created_at,
-      source: 'server',
+      source: 'server' as const,
     })),
     ...pendingLocalUploads.map((u, index) => ({
       file_id: u.file_id || `local-${u.file.name}-${u.file.size}-${index}`,
       filename: u.file.name,
       status: u.status,
       created_at: new Date().toISOString(),
-      source: 'local',
+      source: 'local' as const,
       error: u.error,
     })),
   ].sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime());
@@ -583,7 +592,9 @@ export default function Digitiser() {
                           size="small"
                         />
                         {file.source === 'local' && file.status === 'uploading' && <LinearProgress />}
-                        {file.error && <Typography variant="caption" color="error">{file.error}</Typography>}
+                        {file.source === 'local' && file.error && (
+                          <Typography variant="caption" color="error">{file.error}</Typography>
+                        )}
                       </Stack>
                     </TableCell>
                     <TableCell align="center">
@@ -700,7 +711,6 @@ export default function Digitiser() {
                       </Typography>
                       <Typography whiteSpace="pre-wrap">{msg.content || 'Thinking...'}</Typography>
 
-                      {/* Page-Level Clickable Citations */}
                       {msg.sources && msg.sources.length > 0 && (
                         <Accordion sx={{ mt: 2 }}>
                           <AccordionSummary expandIcon={<ExpandMoreIcon />}>
@@ -711,12 +721,10 @@ export default function Digitiser() {
                           <AccordionDetails>
                             <Stack spacing={2}>
                               {msg.sources.map((source, idx) => {
-                                // Find matching file to get file_id
                                 const fileRecord = allFiles.find(
                                   f => f.filename === source.filename && f.status === 'completed'
                                 );
 
-                                // Extract first page number for #page= hash (e.g., "12" from "Page 12" or "Pages 11–12")
                                 const pageMatch = source.page.match(/\d+/);
                                 const firstPage = pageMatch ? parseInt(pageMatch[0]) : 1;
 
