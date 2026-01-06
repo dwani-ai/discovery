@@ -229,6 +229,51 @@ def get_openai_client(model: str = "gemma3") -> AsyncOpenAI:
     return AsyncOpenAI(api_key="http", base_url=DWANI_API_BASE_URL)
 
 
+# utils/token_counter.py
+import tiktoken
+from typing import Optional
+
+# We'll use cl100k_base — most common for recent OpenAI models & many open models
+# If you later switch to a model that uses a different tokenizer, you can make this configurable
+DEFAULT_ENCODING = "cl100k_base"
+
+try:
+    _tokenizer = tiktoken.get_encoding(DEFAULT_ENCODING)
+except Exception as e:
+    raise RuntimeError(f"Failed to load tiktoken encoding '{DEFAULT_ENCODING}': {e}")
+
+def count_tokens(text: str, encoding_name: str = DEFAULT_ENCODING) -> int:
+    """
+    Count the number of tokens in a string using tiktoken.
+    Uses cl100k_base by default (good approximation for most recent models).
+    """
+    if not text:
+        return 0
+    
+    try:
+        return len(_tokenizer.encode(text, disallowed_special=()))
+    except Exception:
+        # Fallback in case of rare encoding errors
+        return len(text) // 4 + len(text.split()) // 2
+
+
+def count_messages_tokens(messages: list[dict], encoding_name: str = DEFAULT_ENCODING) -> int:
+    """
+    Estimate total tokens for a list of chat messages (including role + ~4–8 overhead per message)
+    """
+    total = 0
+    for msg in messages:
+        content = msg.get("content", "")
+        role = msg.get("role", "user")
+        
+        # Rough OpenAI-style overhead
+        overhead = 4 if role == "system" else 3  # system gets slightly more
+        total += count_tokens(content, encoding_name) + overhead
+    
+    # Final reply overhead (~3 tokens)
+    total += 3
+    return total
+
 # ========================= SERVICES =========================
 
 async def extract_text_from_images_per_page(images: List[Image.Image]) -> List[str]:
@@ -515,134 +560,184 @@ def list_files(limit: int = 20, db: Session = Depends(get_db)):
     ]
 
 
-@app.post("/chat-with-document", tags=["Files"])
-async def chat_with_documents(request: MultiChatRequest, db: Session = Depends(get_db)):
-    if not request.file_ids:
-        raise HTTPException(status_code=400, detail="file_ids required")
+from typing import List, Dict, Optional
+from fastapi import HTTPException, Depends
+from sqlalchemy.orm import Session
 
+
+@app.post("/chat-with-document", tags=["Files"])
+async def chat_with_documents(
+    request: MultiChatRequest,
+    db: Session = Depends(get_db)
+):
+    """
+    Multi-document RAG chat endpoint with hybrid search, page-aware citations,
+    contradiction detection and realistic token-aware context building.
+    """
+    if not request.file_ids:
+        raise HTTPException(status_code=400, detail="At least one file_id is required")
+
+    # Load file records
     records = db.query(FileRecord).filter(FileRecord.id.in_(request.file_ids)).all()
     if len(records) != len(request.file_ids):
-        raise HTTPException(status_code=404, detail="Some files not found")
+        raise HTTPException(status_code=404, detail="One or more files not found")
 
-    for r in records:
-        if r.status != FileStatus.COMPLETED:
-            raise HTTPException(status_code=400, detail=f"File {r.filename} not processed")
+    for record in records:
+        if record.status != FileStatus.COMPLETED or not record.extracted_text:
+            raise HTTPException(
+                status_code=400,
+                detail=f"File '{record.filename}' is not yet fully processed"
+            )
 
-    user_msg = [m for m in request.messages if m.role == "user"]
-    if not user_msg:
-        raise HTTPException(status_code=400, detail="No user question")
-    question = user_msg[-1].content.lower()
+    # Get the latest user question
+    user_messages = [m for m in request.messages if m.role == "user"]
+    if not user_messages:
+        raise HTTPException(status_code=400, detail="No user question found")
+    question = user_messages[-1].content.strip()
 
-    # === Hybrid Search ===
+    # ─────────────────────────────────────────────────────────────
+    # 1. Hybrid Retrieval (Vector + BM25 + RRF)
+    # ─────────────────────────────────────────────────────────────
     vector_results = collection.query(
         query_embeddings=embedding_function([question]),
-        n_results=20,
+        n_results=25,
         where={"file_id": {"$in": request.file_ids}},
-        include=["documents", "metadatas", "distances"],
+        include=["documents", "metadatas", "distances"]
     )
 
-    vector_docs = vector_results["documents"][0] if vector_results["documents"] else []
-    vector_metas = vector_results["metadatas"][0] if vector_results["metadatas"] else []
-    vector_distances = vector_results["distances"][0] if vector_results["distances"] else []
+    vector_docs = vector_results["documents"][0] or []
+    vector_metas = vector_results["metadatas"][0] or []
+    vector_distances = vector_results["distances"][0] or []
 
+    # BM25 ranking on the retrieved candidates
+    if vector_docs:
+        tokenized_docs = [doc.lower().split() for doc in vector_docs]
+        bm25 = BM25Okapi(tokenized_docs)
+        tokenized_query = question.lower().split()
+        bm25_scores = bm25.get_scores(tokenized_query)
+        bm25_ranked = sorted(
+            [(i, score) for i, score in enumerate(bm25_scores) if score > 0],
+            key=lambda x: x[1],
+            reverse=True
+        )
+    else:
+        bm25_ranked = []
+
+    # Simple vector ranking (lower distance = better)
     vector_ranked = [(i, dist) for i, dist in enumerate(vector_distances)]
 
-    all_chunks = [d for d in vector_docs]
-    bm25 = BM25Okapi([doc.lower().split() for doc in all_chunks])
-    tokenized_query = question.split()
-    bm25_scores = bm25.get_scores(tokenized_query)
-    bm25_ranked = [(i, -score) for i, score in enumerate(bm25_scores) if score > 0]
-    bm25_ranked.sort(key=lambda x: x[1], reverse=True)
+    # Reciprocal Rank Fusion
+    all_ranked_pairs = vector_ranked + [(i, -score) for i, score in bm25_ranked]  # negate BM25 so higher = better
+    fused_indices = reciprocal_rank_fusion(all_ranked_pairs, k=60)[:20]
 
-    all_ranked_pairs = vector_ranked + bm25_ranked
-    fused_indices = reciprocal_rank_fusion(all_ranked_pairs)[:20]
+    # ─────────────────────────────────────────────────────────────
+    # 2. Build context — token-aware
+    # ─────────────────────────────────────────────────────────────
+    context_parts: List[str] = []
+    sources: List[Dict] = []
+    context_tokens_used = 0
 
-    # === Build context with token limit ===
-    context_parts = []
-    sources = []
-    current_token_count = 0
+    # Reserve tokens for system prompt, question, formatting, etc.
+    RESERVED_TOKENS = 1200
+    max_context_for_chunks = MAX_CONTEXT_TOKENS - RESERVED_TOKENS
 
-    for idx in fused_indices:
-        if idx >= len(vector_docs):
+    for rank_idx, chunk_idx in enumerate(fused_indices):
+        if chunk_idx >= len(vector_docs):
             continue
 
-        doc = vector_docs[idx]
-        estimated_tokens = len(doc.split()) * 1.3
+        chunk_text = vector_docs[chunk_idx]
+        chunk_tokens = count_tokens(chunk_text)
 
-        if current_token_count + estimated_tokens > MAX_CONTEXT_TOKENS:
+        if context_tokens_used + chunk_tokens > max_context_for_chunks:
             break
 
-        context_parts.append(doc)
-        current_token_count += estimated_tokens
+        context_parts.append(chunk_text)
+        context_tokens_used += chunk_tokens
 
-        meta = vector_metas[idx]
-        filename = meta.get("filename", "Unknown Document")
+        meta = vector_metas[chunk_idx]
+        filename = meta.get("filename", "Unknown")
         page_start = meta.get("page_start")
         page_end = meta.get("page_end")
-        page_citation = f"Page {page_start}"
-        if page_end != page_start:
-            page_citation = f"Pages {page_start}–{page_end}"
+
+        page_str = f"Page {page_start}" if page_start == page_end else f"Pages {page_start}–{page_end}"
 
         sources.append({
             "filename": filename,
-            "page": page_citation,
-            "excerpt": doc.strip(),
-            "relevance_score": round(1 - vector_distances[idx] if idx < len(vector_distances) else 0.5, 3)
+            "page": page_str,
+            "excerpt": chunk_text.strip()[:600] + ("..." if len(chunk_text) > 600 else ""),
+            "relevance_score": round(1 - vector_distances[chunk_idx], 3) if chunk_idx < len(vector_distances) else 0.4
         })
 
-    context = "\n\n".join(context_parts) if context_parts else "No relevant content was found in the document."
+    context_block = "\n\n".join(context_parts) if context_parts else "[No relevant content found in the provided documents]"
 
-    # === Multi-document aware system prompt ===
-    doc_list = ", ".join(set(s["filename"] for s in sources))
-    system_prompt = f"""You are an expert assistant analyzing multiple documents: {doc_list}.
+    # ─────────────────────────────────────────────────────────────
+    # 3. System prompt with multi-document awareness
+    # ─────────────────────────────────────────────────────────────
+    unique_filenames = ", ".join(sorted(set(s["filename"] for s in sources))) or "the document"
+    
+    system_prompt = f"""You are an expert analyst working with content from the following document(s): {unique_filenames}.
 
-When answering:
-- Always explicitly mention which document each fact comes from (e.g., "According to Contract.pdf...", "The NDA states...").
-- If information differs between documents, clearly note it.
-- Be precise and cite page numbers when available.
-
-If the answer cannot be found, say "I don't know".
+Guidelines:
+• For every factual statement, clearly state which document it comes from (example: "According to {list(sources)[0]['filename']} on page X, ...")
+• If information appears to conflict between documents, explicitly note the differences
+• Use page references when available
+• Be concise, accurate and professional
+• If the answer is not supported by the provided context, respond only with: "I don't have sufficient information in the provided documents to answer this question."
 
 Context:
-{context}
+{context_block}
+"""
 
-Answer clearly and professionally."""
-
-    # === Trim conversation history ===
+    # ─────────────────────────────────────────────────────────────
+    # 4. Prepare conversation history (token-limited)
+    # ─────────────────────────────────────────────────────────────
     recent_messages = []
-    history_token_estimate = 0
+    history_tokens = 0
 
-    for msg in reversed(request.messages[-12:]):
-        msg_tokens = len(msg.content.split()) * 1.3
-        if history_token_estimate + msg_tokens > MAX_HISTORY_TOKENS:
+    for msg in reversed(request.messages):
+        # Rough per-message token estimate (content + role overhead)
+        msg_content = f"{msg.role}: {msg.content}"
+        msg_tokens = count_tokens(msg_content) + 8  # rough role + formatting overhead
+
+        if history_tokens + msg_tokens > MAX_HISTORY_TOKENS:
             break
-        recent_messages.insert(0, msg)
-        history_token_estimate += msg_tokens
 
+        recent_messages.insert(0, msg)
+        history_tokens += msg_tokens
+
+    # Final message list
     full_messages = [
         {"role": "system", "content": system_prompt},
-        *[{"role": m.role, "content": m.content} for m in recent_messages]
+        *[ {"role": m.role, "content": m.content} for m in recent_messages ]
     ]
 
+    # Optional: final size check (for logging / debugging)
+    total_input_tokens = count_messages_tokens(full_messages)
+
+    # ─────────────────────────────────────────────────────────────
+    # 5. Call LLM
+    # ─────────────────────────────────────────────────────────────
     try:
         client = get_openai_client()
         response = await client.chat.completions.create(
             model="gemma3",
             messages=full_messages,
-            temperature=0.5,
-            max_tokens=1024,
+            temperature=0.55,
+            max_tokens=1400,
+            top_p=0.92,
         )
 
         answer = response.choices[0].message.content.strip()
 
-        # === Detect contradictions ===
-        contradiction_warning = await detect_contradictions(question, sources[:10])
+        # Optional contradiction check on top sources
+        contradiction_note = await detect_contradictions(question, sources[:8])
 
+        # Sort sources by relevance for response
         sources.sort(key=lambda x: x["relevance_score"], reverse=True)
 
         final_answer = answer
-        if contradiction_warning:
-            final_answer = f"⚠️ **Potential Contradiction Detected**\n\n{contradiction_warning}\n\n**Answer:**\n{answer}"
+        if contradiction_note:
+            final_answer = f"⚠️ **Possible Contradiction Detected**\n\n{contradiction_note}\n\n**Answer:**\n{answer}"
 
         return {
             "answer": final_answer,
@@ -650,15 +745,26 @@ Answer clearly and professionally."""
                 {
                     "filename": s["filename"],
                     "page": s["page"],
-                    "excerpt": s["excerpt"][:500],
+                    "excerpt": s["excerpt"],
                     "relevance_score": s["relevance_score"]
                 }
-                for s in sources[:5]
-            ]
+                for s in sources[:6]   # top 6 usually sufficient
+            ],
+            "usage": {
+                "context_tokens_used": context_tokens_used,
+                "total_input_tokens_estimated": total_input_tokens,
+                "max_context_limit": MAX_CONTEXT_TOKENS
+            }
         }
+
     except Exception as e:
-        logger.error(f"LLM call failed: {e}")
-        raise HTTPException(status_code=500, detail="Failed to generate response")
+        logger.error(f"LLM generation failed", extra={
+            "file_ids": request.file_ids,
+            "question": question[:120],
+            "input_tokens_approx": total_input_tokens,
+            "error": str(e)
+        })
+        raise HTTPException(status_code=500, detail="Failed to generate answer")
 
 
 @app.delete("/files/{file_id}", tags=["Files"])

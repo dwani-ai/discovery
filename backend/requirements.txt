@@ -24,3 +24,4 @@ httpx
 respx
 sqlalchemy[asyncio] 
 testcontainers
+tiktoken
