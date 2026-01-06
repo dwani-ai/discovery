@@ -274,6 +274,176 @@ def count_messages_tokens(messages: list[dict], encoding_name: str = DEFAULT_ENC
     total += 3
     return total
 
+#====================== RAG EVAL ==============
+
+import json
+from typing import List, Dict, Tuple, Optional
+from openai import AsyncOpenAI
+import logging
+
+logger = logging.getLogger(__name__)
+
+async def llm_judge(
+    prompt: str,
+    client: AsyncOpenAI,
+    model: str = "gemma3",
+    temperature: float = 0.1,
+    max_tokens: int = 350
+) -> Optional[Dict]:
+    """Helper: call LLM and try to parse JSON output"""
+    try:
+        response = await client.chat.completions.create(
+            model=model,
+            messages=[{"role": "user", "content": prompt}],
+            temperature=temperature,
+            max_tokens=max_tokens,
+        )
+        content = response.choices[0].message.content.strip()
+        
+        # Try to clean common markdown / code fence issues
+        if content.startswith("```json"):
+            content = content.split("```json", 1)[1].rsplit("```", 1)[0].strip()
+        elif content.startswith("```"):
+            content = content.split("```", 2)[1].strip()
+            
+        return json.loads(content)
+    except Exception as e:
+        logger.warning(f"LLM judge parsing failed: {e}", exc_info=True)
+        return None
+
+
+async def evaluate_rag_triad(
+    question: str,
+    contexts: List[str],
+    answer: str,
+    client: AsyncOpenAI,
+    model: str = "gemma3"
+) -> Dict[str, Dict[str, float | str]]:
+    """
+    Evaluate RAG response using three reference-free metrics.
+    Returns dict with metric name → {score: float 0–1, explanation: str}
+    """
+    results = {}
+
+    # ── 1. Faithfulness / Groundedness ────────────────────────────────────
+    faithfulness_prompt = f"""You are an impartial evaluator checking if an answer is fully grounded in the given context.
+
+CONTEXT (multiple chunks):
+{chr(10).join(f"[{i+1}] {chunk.strip()}" for i, chunk in enumerate(contexts))}
+
+QUESTION:
+{question}
+
+ANSWER:
+{answer}
+
+Instructions:
+1. Break the ANSWER into individual factual statements/claims.
+2. For each claim, verify if it is directly supported, strongly implied, or entailed by the CONTEXT.
+   - Supported = clearly present (possibly paraphrased)
+   - Partially supported = weak implication
+   - Unsupported / contradicted / invented = hallucination
+3. Score = (number of fully/partially supported claims) / (total claims)
+   - Range: 0.0 (completely hallucinated) to 1.0 (perfectly grounded)
+
+Return **only** valid JSON:
+{{
+  "score": <float between 0.0 and 1.0>,
+  "explanation": "one or two sentence summary of findings",
+  "claim_count": <int>,
+  "supported_count": <int>
+}}
+"""
+
+    faith_result = await llm_judge(faithfulness_prompt, client, model)
+    if faith_result and "score" in faith_result:
+        results["faithfulness"] = {
+            "score": float(faith_result["score"]),
+            "explanation": faith_result.get("explanation", "No explanation provided")
+        }
+    else:
+        results["faithfulness"] = {"score": 0.0, "explanation": "Evaluation failed"}
+
+    # ── 2. Answer Relevancy ───────────────────────────────────────────────
+    relevancy_prompt = f"""Evaluate how relevant and focused the ANSWER is to the QUESTION.
+
+QUESTION:
+{question}
+
+ANSWER:
+{answer}
+
+Scoring guidelines (0.0–1.0):
+• 1.0 = Directly, concisely, and completely answers the question
+• 0.7–0.9 = Mostly relevant, minor digressions
+• 0.4–0.6 = Partially relevant or contains noticeable irrelevant content
+• 0.0–0.3 = Mostly off-topic, evasive, or rambling
+
+Return **only** JSON:
+{{
+  "score": <float 0.0–1.0>,
+  "explanation": "one sentence explanation"
+}}
+"""
+
+    rel_result = await llm_judge(relevancy_prompt, client, model)
+    if rel_result and "score" in rel_result:
+        results["answer_relevancy"] = {
+            "score": float(rel_result["score"]),
+            "explanation": rel_result.get("explanation", "")
+        }
+    else:
+        results["answer_relevancy"] = {"score": 0.0, "explanation": "Evaluation failed"}
+
+    # ── 3. Context Relevancy (average chunk relevance) ─────────────────────
+    if not contexts:
+        results["context_relevancy"] = {"score": 0.0, "explanation": "No context retrieved"}
+    else:
+        chunk_scores = []
+        explanations = []
+
+        for i, chunk in enumerate(contexts, 1):
+            chunk_prompt = f"""Rate how relevant this CONTEXT chunk is to the QUESTION.
+
+QUESTION:
+{question}
+
+CONTEXT CHUNK [{i}/{len(contexts)}]:
+{chunk.strip()}
+
+Score 0.0–1.0:
+• 1.0 = highly relevant, necessary information
+• 0.6–0.9 = useful / related
+• 0.3–0.5 = marginally related
+• 0.0–0.2 = irrelevant / noise
+
+Return **only** JSON:
+{{
+  "score": <float>,
+  "explanation": "short reason"
+}}
+"""
+
+            chunk_eval = await llm_judge(chunk_prompt, client, model, max_tokens=120)
+            if chunk_eval and "score" in chunk_eval:
+                score = float(chunk_eval["score"])
+                chunk_scores.append(score)
+                explanations.append(f"Chunk {i}: {chunk_eval.get('explanation', '—')} ({score:.2f})")
+            else:
+                chunk_scores.append(0.0)
+
+        if chunk_scores:
+            avg_score = sum(chunk_scores) / len(chunk_scores)
+            results["context_relevancy"] = {
+                "score": round(avg_score, 3),
+                "explanation": f"Average over {len(contexts)} chunks • " + " | ".join(explanations[:3])
+            }
+        else:
+            results["context_relevancy"] = {"score": 0.0, "explanation": "Evaluation failed"}
+
+    return results
+
+
 # ========================= SERVICES =========================
 
 async def extract_text_from_images_per_page(images: List[Image.Image]) -> List[str]:
@@ -559,11 +729,14 @@ def list_files(limit: int = 20, db: Session = Depends(get_db)):
         for f in files
     ]
 
-
 from typing import List, Dict, Optional
-from fastapi import HTTPException, Depends
+import logging
+from fastapi import HTTPException, Depends, Body
 from sqlalchemy.orm import Session
+from openai import AsyncOpenAI
 
+
+logger = logging.getLogger(__name__)
 
 @app.post("/chat-with-document", tags=["Files"])
 async def chat_with_documents(
@@ -571,13 +744,13 @@ async def chat_with_documents(
     db: Session = Depends(get_db)
 ):
     """
-    Multi-document RAG chat endpoint with hybrid search, page-aware citations,
-    contradiction detection and realistic token-aware context building.
+    Multi-document-aware RAG chat with hybrid retrieval,
+    page-aware citations, contradiction detection and basic RAG evaluation.
     """
     if not request.file_ids:
         raise HTTPException(status_code=400, detail="At least one file_id is required")
 
-    # Load file records
+    # Load and validate file records
     records = db.query(FileRecord).filter(FileRecord.id.in_(request.file_ids)).all()
     if len(records) != len(request.file_ids):
         raise HTTPException(status_code=404, detail="One or more files not found")
@@ -589,15 +762,13 @@ async def chat_with_documents(
                 detail=f"File '{record.filename}' is not yet fully processed"
             )
 
-    # Get the latest user question
-    user_messages = [m for m in request.messages if m.role == "user"]
+    # Extract latest user question
+    user_messages = [m for m in request.messages if m.role.lower() == "user"]
     if not user_messages:
         raise HTTPException(status_code=400, detail="No user question found")
     question = user_messages[-1].content.strip()
 
-    # ─────────────────────────────────────────────────────────────
-    # 1. Hybrid Retrieval (Vector + BM25 + RRF)
-    # ─────────────────────────────────────────────────────────────
+    # ── 1. Hybrid Retrieval ───────────────────────────────────────────────
     vector_results = collection.query(
         query_embeddings=embedding_function([question]),
         n_results=25,
@@ -609,116 +780,98 @@ async def chat_with_documents(
     vector_metas = vector_results["metadatas"][0] or []
     vector_distances = vector_results["distances"][0] or []
 
-    # BM25 ranking on the retrieved candidates
+    # BM25 ranking
+    bm25_ranked = []
     if vector_docs:
+        from rank_bm25 import BM25Okapi
         tokenized_docs = [doc.lower().split() for doc in vector_docs]
         bm25 = BM25Okapi(tokenized_docs)
         tokenized_query = question.lower().split()
         bm25_scores = bm25.get_scores(tokenized_query)
-        bm25_ranked = sorted(
-            [(i, score) for i, score in enumerate(bm25_scores) if score > 0],
-            key=lambda x: x[1],
-            reverse=True
-        )
-    else:
-        bm25_ranked = []
+        bm25_ranked = [
+            (i, score) for i, score in enumerate(bm25_scores) if score > 0
+        ]
+        bm25_ranked.sort(key=lambda x: x[1], reverse=True)
 
-    # Simple vector ranking (lower distance = better)
+    # Combine rankings with RRF
     vector_ranked = [(i, dist) for i, dist in enumerate(vector_distances)]
+    combined_pairs = vector_ranked + [(i, -score) for i, score in bm25_ranked]  # negate BM25
+    fused_indices = reciprocal_rank_fusion(combined_pairs, k=60)[:20]
 
-    # Reciprocal Rank Fusion
-    all_ranked_pairs = vector_ranked + [(i, -score) for i, score in bm25_ranked]  # negate BM25 so higher = better
-    fused_indices = reciprocal_rank_fusion(all_ranked_pairs, k=60)[:20]
-
-    # ─────────────────────────────────────────────────────────────
-    # 2. Build context — token-aware
-    # ─────────────────────────────────────────────────────────────
+    # ── 2. Build token-limited context ────────────────────────────────────
     context_parts: List[str] = []
     sources: List[Dict] = []
     context_tokens_used = 0
 
-    # Reserve tokens for system prompt, question, formatting, etc.
     RESERVED_TOKENS = 1200
-    max_context_for_chunks = MAX_CONTEXT_TOKENS - RESERVED_TOKENS
+    max_context_tokens = MAX_CONTEXT_TOKENS - RESERVED_TOKENS
 
-    for rank_idx, chunk_idx in enumerate(fused_indices):
-        if chunk_idx >= len(vector_docs):
+    for idx in fused_indices:
+        if idx >= len(vector_docs):
             continue
 
-        chunk_text = vector_docs[chunk_idx]
-        chunk_tokens = count_tokens(chunk_text)
+        chunk = vector_docs[idx]
+        chunk_tokens = count_tokens(chunk)
 
-        if context_tokens_used + chunk_tokens > max_context_for_chunks:
+        if context_tokens_used + chunk_tokens > max_context_tokens:
             break
 
-        context_parts.append(chunk_text)
+        context_parts.append(chunk)
         context_tokens_used += chunk_tokens
 
-        meta = vector_metas[chunk_idx]
+        meta = vector_metas[idx]
         filename = meta.get("filename", "Unknown")
         page_start = meta.get("page_start")
         page_end = meta.get("page_end")
-
         page_str = f"Page {page_start}" if page_start == page_end else f"Pages {page_start}–{page_end}"
 
         sources.append({
             "filename": filename,
             "page": page_str,
-            "excerpt": chunk_text.strip()[:600] + ("..." if len(chunk_text) > 600 else ""),
-            "relevance_score": round(1 - vector_distances[chunk_idx], 3) if chunk_idx < len(vector_distances) else 0.4
+            "excerpt": chunk.strip()[:600] + ("..." if len(chunk) > 600 else ""),
+            "relevance_score": round(1 - vector_distances[idx], 3)
+                if idx < len(vector_distances) else 0.45
         })
 
-    context_block = "\n\n".join(context_parts) if context_parts else "[No relevant content found in the provided documents]"
+    context_block = "\n\n".join(context_parts) if context_parts else "[No relevant content found]"
 
-    # ─────────────────────────────────────────────────────────────
-    # 3. System prompt with multi-document awareness
-    # ─────────────────────────────────────────────────────────────
-    unique_filenames = ", ".join(sorted(set(s["filename"] for s in sources))) or "the document"
-    
-    system_prompt = f"""You are an expert analyst working with content from the following document(s): {unique_filenames}.
+    # ── 3. System prompt ──────────────────────────────────────────────────
+    unique_docs = ", ".join(sorted(set(s["filename"] for s in sources))) or "the documents"
+    system_prompt = f"""You are an expert analyst working with content extracted from: {unique_docs}.
 
-Guidelines:
-• For every factual statement, clearly state which document it comes from (example: "According to {list(sources)[0]['filename']} on page X, ...")
-• If information appears to conflict between documents, explicitly note the differences
-• Use page references when available
+Rules:
+• Clearly state which document(s) each fact comes from (example: "According to {sources[0]['filename'] if sources else 'a document'}, page X...")
+• Note any apparent contradictions between documents
+• Use page numbers when available
 • Be concise, accurate and professional
-• If the answer is not supported by the provided context, respond only with: "I don't have sufficient information in the provided documents to answer this question."
+• If the question cannot be answered from the provided context, reply only: "I don't have sufficient information in the provided documents to answer this question."
 
 Context:
 {context_block}
 """
 
-    # ─────────────────────────────────────────────────────────────
-    # 4. Prepare conversation history (token-limited)
-    # ─────────────────────────────────────────────────────────────
+    # ── 4. Prepare conversation history (token limited) ───────────────────
     recent_messages = []
     history_tokens = 0
 
     for msg in reversed(request.messages):
-        # Rough per-message token estimate (content + role overhead)
-        msg_content = f"{msg.role}: {msg.content}"
-        msg_tokens = count_tokens(msg_content) + 8  # rough role + formatting overhead
-
+        content_for_count = f"{msg.role}: {msg.content}"
+        msg_tokens = count_tokens(content_for_count) + 10  # rough overhead
         if history_tokens + msg_tokens > MAX_HISTORY_TOKENS:
             break
-
         recent_messages.insert(0, msg)
         history_tokens += msg_tokens
 
-    # Final message list
     full_messages = [
         {"role": "system", "content": system_prompt},
-        *[ {"role": m.role, "content": m.content} for m in recent_messages ]
+        *[{"role": m.role, "content": m.content} for m in recent_messages]
     ]
 
-    # Optional: final size check (for logging / debugging)
     total_input_tokens = count_messages_tokens(full_messages)
 
-    # ─────────────────────────────────────────────────────────────
-    # 5. Call LLM
-    # ─────────────────────────────────────────────────────────────
+    # ── 5. Generate answer ────────────────────────────────────────────────
+    client = get_openai_client()
     try:
-        client = get_openai_client()
         response = await client.chat.completions.create(
             model="gemma3",
             messages=full_messages,
@@ -726,45 +879,57 @@ Context:
             max_tokens=1400,
             top_p=0.92,
         )
-
         answer = response.choices[0].message.content.strip()
-
-        # Optional contradiction check on top sources
-        contradiction_note = await detect_contradictions(question, sources[:8])
-
-        # Sort sources by relevance for response
-        sources.sort(key=lambda x: x["relevance_score"], reverse=True)
-
-        final_answer = answer
-        if contradiction_note:
-            final_answer = f"⚠️ **Possible Contradiction Detected**\n\n{contradiction_note}\n\n**Answer:**\n{answer}"
-
-        return {
-            "answer": final_answer,
-            "sources": [
-                {
-                    "filename": s["filename"],
-                    "page": s["page"],
-                    "excerpt": s["excerpt"],
-                    "relevance_score": s["relevance_score"]
-                }
-                for s in sources[:6]   # top 6 usually sufficient
-            ],
-            "usage": {
-                "context_tokens_used": context_tokens_used,
-                "total_input_tokens_estimated": total_input_tokens,
-                "max_context_limit": MAX_CONTEXT_TOKENS
-            }
-        }
-
     except Exception as e:
-        logger.error(f"LLM generation failed", extra={
-            "file_ids": request.file_ids,
-            "question": question[:120],
-            "input_tokens_approx": total_input_tokens,
-            "error": str(e)
-        })
+        logger.error("LLM generation failed", extra={"error": str(e), "question": question[:180]})
         raise HTTPException(status_code=500, detail="Failed to generate answer")
+
+    # ── 6. Optional contradiction detection ───────────────────────────────
+    contradiction_note = None
+    if len(sources) >= 2:
+        contradiction_note = await detect_contradictions(question, sources[:10])
+
+    final_answer = answer
+    if contradiction_note and "no contradictions" not in contradiction_note.lower():
+        final_answer = f"⚠️ **Possible Contradiction Detected**\n\n{contradiction_note}\n\n**Answer:**\n{answer}"
+
+    # ── 7. RAG evaluation (lightweight, reference-free) ───────────────────
+    eval_metrics = {"faithfulness": {"score": None, "explanation": "not evaluated"},
+                    "answer_relevancy": {"score": None, "explanation": "not evaluated"},
+                    "context_relevancy": {"score": None, "explanation": "not evaluated"}}
+
+    try:
+        eval_metrics = await evaluate_rag_triad(
+            question=question,
+            contexts=context_parts,
+            answer=answer,
+            client=client,
+            model="gemma3"
+        )
+    except Exception as eval_err:
+        logger.warning("RAG evaluation failed", exc_info=True)
+
+    # ── 8. Final response ─────────────────────────────────────────────────
+    sources_sorted = sorted(sources, key=lambda x: x["relevance_score"], reverse=True)
+
+    return {
+        "answer": final_answer,
+        "sources": [
+            {
+                "filename": s["filename"],
+                "page": s["page"],
+                "excerpt": s["excerpt"],
+                "relevance_score": s["relevance_score"]
+            }
+            for s in sources_sorted[:6]
+        ],
+        "usage": {
+            "context_tokens_used": context_tokens_used,
+            "total_input_tokens_estimated": total_input_tokens,
+            "max_context_allowed": MAX_CONTEXT_TOKENS
+        },
+        "rag_evaluation": eval_metrics
+    }
 
 
 @app.delete("/files/{file_id}", tags=["Files"])
