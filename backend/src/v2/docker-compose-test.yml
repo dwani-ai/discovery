@@ -1,0 +1,50 @@
+version: "3.9"
+
+services:
+  app:
+    build:
+      context: .
+      dockerfile: Dockerfile.test
+    depends_on:
+      - postgres
+      - chroma
+    environment:
+      - DWANI_API_BASE_URL=http://mock-llm:8000/v1  # We'll mock this
+      - DATABASE_URL=postgresql+asyncpg://test:test@postgres:5432/testdb
+      - MAX_CONTEXT_TOKENS=8000
+    volumes:
+      - ./tests/integration/docker:/app/tests/integration/docker
+      - ./chroma_data:/app/chroma_db  # Persist for debugging if needed
+
+  postgres:
+    image: postgres:15
+    environment:
+      POSTGRES_USER: test
+      POSTGRES_PASSWORD: test
+      POSTGRES_DB: testdb
+    ports:
+      - "5433:5432"
+    healthcheck:
+      test: ["CMD", "pg_isready", "-U", "test"]
+      interval: 3s
+      timeout: 5s
+      retries: 5
+
+  chroma:
+    image: chromadb/chroma:0.5.5
+    ports:
+      - "8001:8000"
+    environment:
+      - IS_PERSISTENT=TRUE
+      - PERSIST_DIRECTORY=/chroma_data
+    volumes:
+      - chroma_data:/chroma_data
+
+  mock-llm:
+    image: ghcr.io/mendableai/firecrawl-mock-llm:latest  # Or build your own
+    ports:
+      - "8002:8000"
+    # This mock server returns fixed responses for /chat/completions
+
+volumes:
+  chroma_data:
