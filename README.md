@@ -39,3 +39,58 @@ Try Demo :  [https://app.dwani.ai](https://app.dwani.ai)
 ```
     docker compose -f docker-compose.yml up -d
 ```
+
+```
+
+┌─────────────────────────────────────────────────────────────────────────────┐
+│                               CLIENT (Browser / App)                        │
+│                                                                             │
+│   • Upload PDF           • Chat with documents           • Download clean PDF │
+└─────────────────────────────────────────────────────────────────────────────┘
+                                    │
+                                    ▼           HTTP / multipart
+                         ┌───────────────────────────────┐
+                         │          FastAPI Server       │
+                         │   (uvicorn + ASGI)            │
+                         └───────────────┬───────────────┘
+                                         │
+                ┌────────────────────────┼─────────────────────────────┐
+                │                        │                             │
+       ┌────────▼────────┐      ┌────────▼────────┐         ┌─────────▼─────────┐
+       │   File Upload   │      │  /chat-with-    │         │  /files/{id}/pdf  │
+       │   endpoint      │      │  document       │         │  (regenerate)     │
+       └────────┬────────┘      └────────┬────────┘         └─────────┬─────────┘
+                │                        │                             │
+                │ BackgroundTasks        │                             │
+                ▼                        ▼                             ▼
+       ┌─────────────────────┐   ┌─────────────────────┐   ┌─────────────────────┐
+       │ PDF → Images        │   │ Hybrid Retrieval    │   │ Text → Clean PDF    │
+       │ (pdf2image)         │   │ (Chroma + BM25)     │   │ (fpdf + DejaVuSans) │
+       └────────┬────────────┘   └────────┬────────────┘   └────────┬────────────┘
+                │                        │                             │
+                ▼                        ▼                             │
+       ┌─────────────────────┐   ┌─────────────────────┐             │
+       │ OCR per page        │   │ RRF Fusion          │             │
+       │ (gemma3 vision)     │   │ → top chunks        │             │
+       └────────┬────────────┘   └────────┬────────────┘             │
+                │                        │                             │
+                ▼                        ▼                             │
+       ┌─────────────────────┐   ┌─────────────────────┐             │
+       │ Store full text     │   │ Build context       │◄────────────┘
+       │   → SQLite          │   │ (token limited)     │
+       └────────┬────────────┘   └────────┬────────────┘
+                │                        │
+                ▼                        ▼
+       ┌─────────────────────┐   ┌─────────────────────┐
+       │ Chunk + Embed       │   │ LLM generation      │
+       │   → ChromaDB        │   │ (gemma3 text-only)  │
+       └─────────────────────┘   └────────┬────────────┘
+                                           │
+                                           ▼
+                                 Answer + Sources +
+                             Contradiction Warning (if any)
+                                           │
+                                           ▼
+                                    Back to Client
+
+```
