@@ -47,6 +47,7 @@ import {
   Clear as ClearIcon,
   Description as DescriptionIcon,
   ExpandMore as ExpandMoreIcon,
+  Search as SearchIcon,           // ← added
 } from '@mui/icons-material';
 import Highlight from 'react-highlight-words';
 
@@ -298,7 +299,7 @@ const useChat = () => {
       const welcome: Message = {
         role: 'assistant',
         content: isGlobal
-          ? `**Global Chat** loaded with **${fileIds.length}** document${fileIds.length > 1 ? 's' : ''}.\n\nAsk me anything across your library!`
+          ? `**Global search mode** loaded with **${fileIds.length}** document${fileIds.length > 1 ? 's' : ''}.\n\nAsk me anything across your entire library!`
           : `Loaded **${fileIds.length}** document${fileIds.length > 1 ? 's' : ''}: ${filenames.join(', ')}\n\nAsk me anything!`,
       };
       setChatHistory([welcome]);
@@ -529,17 +530,40 @@ export default function Digitiser() {
           </Alert>
         )}
 
-        {/* Documents Header */}
-        <Box display="flex" justifyContent="space-between" alignItems="center">
+        {/* Documents Header – with new "Search across all documents" button */}
+        <Box display="flex" justifyContent="space-between" alignItems="center" mb={2}>
           <Typography variant="h6">Your Documents ({allFiles.length})</Typography>
-          <Button
-            variant="contained"
-            startIcon={<LanguageIcon />}
-            onClick={() => openChat(completedFiles.map(f => f.file_id), completedFiles.map(f => f.filename), true)}
-            disabled={completedFiles.length === 0}
-          >
-            Global Chat ({completedFiles.length})
-          </Button>
+
+          <Stack direction="row" spacing={1.5}>
+            {/* New button – Search across all documents */}
+            <Button
+              variant="outlined"
+              color="primary"
+              startIcon={<SearchIcon />}
+              onClick={() => {
+                const completedIds = completedFiles.map(f => f.file_id);
+                const completedNames = completedFiles.map(f => f.filename);
+                openChat(completedIds, completedNames, true);
+              }}
+              disabled={completedFiles.length === 0}
+            >
+              Search across all documents
+            </Button>
+
+            {/* Existing Global Chat button – kept for distinction */}
+            <Button
+              variant="contained"
+              startIcon={<LanguageIcon />}
+              onClick={() => {
+                const completedIds = completedFiles.map(f => f.file_id);
+                const completedNames = completedFiles.map(f => f.filename);
+                openChat(completedIds, completedNames, true);
+              }}
+              disabled={completedFiles.length === 0}
+            >
+              Global Chat ({completedFiles.length})
+            </Button>
+          </Stack>
         </Box>
 
         {/* Documents Table */}
@@ -678,7 +702,7 @@ export default function Digitiser() {
             <Stack direction="row" justifyContent="space-between" alignItems="center">
               <Typography variant="h6">
                 {currentConvId === GLOBAL_CHAT_ID
-                  ? `Global Chat • ${activeFilenames.length} documents`
+                  ? `Global Search • ${activeFilenames.length} documents`
                   : activeFilenames.length === 1
                     ? activeFilenames[0]
                     : `${activeFilenames.length} documents`}
@@ -893,11 +917,11 @@ export default function Digitiser() {
                   >
                     <ListItemAvatar>
                       <Avatar sx={{ bgcolor: 'white', color: 'primary.main' }}>
-                        <LanguageIcon />
+                        <SearchIcon />  {/* changed icon to match new button */}
                       </Avatar>
                     </ListItemAvatar>
                     <ListItemText
-                      primary="Global Chat"
+                      primary="Library Search"
                       secondary={`${completedFiles.length} documents`}
                       primaryTypographyProps={{ fontWeight: 'bold' }}
                     />
