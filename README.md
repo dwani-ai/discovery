@@ -94,3 +94,50 @@ Try Demo :  [https://app.dwani.ai](https://app.dwani.ai)
                                     Back to Client
 
 ```
+
+
+----
+
+1. Lane 1: Document Ingestion & OCR
+
+
+
+```
+Upload PDF
+   ↓
+Background Task
+   ↓
+pdf2image → list of PIL Images
+   ↓ (parallel / sequential)
+gemma3-vision OCR per page
+   ↓
+page_texts: List[str]
+   ├─→ SQLite (FileRecord.extracted_text)
+   └─→ chunk_text_with_pages() → ChromaDB (with page metadata)
+
+```
+----
+
+2. Lane 2: Chat / RAG
+
+
+
+```
+User question + file_ids
+   ↓
+Hybrid search:
+   ├─→ Chroma vector search (bge-small-en-v1.5)
+   └─→ BM25 on top-20 vector results
+        ↓
+Reciprocal Rank Fusion (RRF)
+        ↓
+Top ~10–20 chunks (with page & file metadata)
+        ↓
+Context building (greedy token limit)
+        ↓
+System prompt + history (trimmed) + context
+        ↓
+gemma3 (text-only)
+        ↓
+Answer + Sources list + optional Contradiction warning
+```
