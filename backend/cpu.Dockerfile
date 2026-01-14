@@ -21,10 +21,10 @@ COPY cpu-requirements.txt .
 RUN pip install --no-cache-dir --prefix=/install \
     --index-url https://download.pytorch.org/whl/cpu \
     --no-deps \
-    torch torchvision torchaudio
+    torch==2.9.1+cpu torchvision==0.24.1+cpu torchaudio==2.9.1+cpu
 
 # Then install everything else normally
-RUN pip install --no-cache-dir --prefix=/install -r cpu-requirements.txt
+RUN pip install --no-cache-dir --prefix=/install --ignore-installed -r cpu-requirements.txt
 
 # ============================
 # Stage 2: Runtime
