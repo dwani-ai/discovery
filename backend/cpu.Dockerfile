@@ -1,57 +1,57 @@
 # ============================
 # Stage 1: Builder
 # ============================
-FROM python:3.9-slim AS builder
+FROM python:3.11-slim AS builder
 
-# Prevent Python from writing .pyc files and enable unbuffered logs
 ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1
 
-# Set working directory
 WORKDIR /app
 
-# System deps for building and pdf2image (poppler)
+# System dependencies needed for building + pdf2image/poppler
 RUN apt-get update && apt-get install -y --no-install-recommends \
     build-essential \
     poppler-utils \
     && apt-get clean \
     && rm -rf /var/lib/apt/lists/*
 
-# Copy requirements (CPU-only requirements file)
+# Copy only the CPU-only requirements
 COPY cpu-requirements.txt .
 
-# Install Python dependencies into a dedicated prefix
+RUN pip install --no-cache-dir --prefix=/install \
+    --index-url https://download.pytorch.org/whl/cpu \
+    --no-deps \
+    torch torchvision torchaudio
+
+# Then install everything else normally
 RUN pip install --no-cache-dir --prefix=/install -r cpu-requirements.txt
 
 # ============================
 # Stage 2: Runtime
 # ============================
-FROM python:3.9-slim
+FROM python:3.11-slim
 
 ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1
 
-# Set working directory
 WORKDIR /app
 
-# Only runtime system deps (no compiler)
+# Runtime deps only
 RUN apt-get update && apt-get install -y --no-install-recommends \
     poppler-utils \
     && apt-get clean \
     && rm -rf /var/lib/apt/lists/*
 
-# Optional: create non-root user
-RUN useradd -m appuser
+# Optional: non-root user (good practice)
+RUN useradd -m -u 1000 appuser
 USER appuser
 
-# Copy installed Python packages from builder stage
+# Copy pure python packages from builder
 COPY --from=builder /install /usr/local
 
-# Copy application code
+# Copy your application code
 COPY . .
 
-# Expose FastAPI port
 EXPOSE 18888
 
-# Run FastAPI with Uvicorn
 CMD ["uvicorn", "src.server.main:app", "--host", "0.0.0.0", "--port", "18888"]
