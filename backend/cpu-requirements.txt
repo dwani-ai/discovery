@@ -1,0 +1,31 @@
+torch --index-url https://download.pytorch.org/whl/cpu
+torchvision --index-url https://download.pytorch.org/whl/cpu
+torchaudio --index-url https://download.pytorch.org/whl/cpu
+setuptools
+wheel
+uvicorn
+fastapi
+pydantic-settings
+slowapi
+requests
+python-multipart
+pillow
+pyjwt
+sqlalchemy
+passlib[bcrypt]
+pycryptodome
+openai
+httpx
+num2words
+pytz
+pdf2image
+fpdf2
+chromadb
+sentence-transformers
+rank-bm25
+pytest
+pytest-asyncio
+respx
+sqlalchemy[asyncio]
+testcontainers
+tiktoken

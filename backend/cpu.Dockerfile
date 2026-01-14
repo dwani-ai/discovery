@@ -17,11 +17,11 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     && apt-get clean \
     && rm -rf /var/lib/apt/lists/*
 
-# Copy requirements
-COPY requirements.txt .
+# Copy requirements (CPU-only requirements file)
+COPY cpu-requirements.txt .
 
 # Install Python dependencies into a dedicated prefix
-RUN pip install --no-cache-dir --prefix=/install -r requirements.txt
+RUN pip install --no-cache-dir --prefix=/install -r cpu-requirements.txt
 
 # ============================
 # Stage 2: Runtime

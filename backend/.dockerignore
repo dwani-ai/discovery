@@ -12,7 +12,7 @@ venv
 dist
 build
 *.db
-
+cpu-venv
 *.log
 venv
 *.nemo
@@ -90,6 +90,6 @@ __pypackages__
 
 
 !requirements.txt
-
+!cpu-requirements.txt
 #!model_requirements.txt
 #!server_requirements.txt

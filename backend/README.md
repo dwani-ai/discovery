@@ -25,3 +25,15 @@ Test
 - LLM Mocked Test
 pytest tests/test_services/test_extraction.py -v
 pytest tests/test_routes/test_chat.py -v
+
+
+--
+
+docker multi-stage build
+
+- cpu
+    - docker build -t dwani/discovery-server-prod-cpu:v-0-0-1-dec-2025 -f cpu.Dockerfile .
+- cuda
+    - docker build -t dwani/discovery-server-prod:v-0-0-1-dec-2025 -f Dockerfile.prod .
+
+ 
