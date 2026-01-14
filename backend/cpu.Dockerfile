@@ -1,7 +1,7 @@
 # ============================
 # Stage 1: Builder
 # ============================
-FROM python:3.11-slim AS builder
+FROM python:3.10-slim AS builder
 
 ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1
@@ -16,20 +16,21 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     && rm -rf /var/lib/apt/lists/*
 
 # Copy only the CPU-only requirements
-COPY cpu-requirements.txt .
 
 RUN pip install --no-cache-dir --prefix=/install \
     --index-url https://download.pytorch.org/whl/cpu \
     --no-deps \
     torch==2.9.1+cpu torchvision==0.24.1+cpu torchaudio==2.9.1+cpu
 
+COPY cpu-requirements.txt .
+
 # Then install everything else normally
-RUN pip install --no-cache-dir --prefix=/install --ignore-installed -r cpu-requirements.txt
+RUN pip install --no-deps --no-cache-dir --prefix=/install --ignore-installed -r cpu-requirements.txt
 
 # ============================
 # Stage 2: Runtime
 # ============================
-FROM python:3.11-slim
+FROM python:3.10-slim
 
 ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1

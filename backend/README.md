@@ -37,3 +37,18 @@ docker multi-stage build
     - docker build -t dwani/discovery-server-prod:v-0-0-1-dec-2025 -f Dockerfile.prod .
 
  
+ -- 
+
+- cpu only optimisation
+
+ ```bash
+python3 -m venv venv
+source venv/bin/activate
+
+pip install --upgrade pip setuptools wheel
+pip install --no-deps   torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cpu
+
+pip install -r cpu-requirements.txt
+
+python src/server/main.py
+```
