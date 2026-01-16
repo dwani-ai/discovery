@@ -17,7 +17,7 @@ source venv/bin/activate
 pip install --upgrade pip setuptools wheel
 pip install --no-deps   torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cpu
 
-pip install -r cpu-requirements.txt
+pip install -r requirements.txt
 
 python src/server/main.py
 ```
