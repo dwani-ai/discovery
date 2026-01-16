@@ -42,7 +42,7 @@ docker multi-stage build
 - cpu only optimisation
 
  ```bash
-python3 -m venv venv
+python3.10 -m venv venv
 source venv/bin/activate
 
 pip install --upgrade pip setuptools wheel
