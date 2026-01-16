@@ -1,6 +1,6 @@
 node_modules/
 chroma_db/
-
+cpu-venv
 # Byte-compiled / optimized / DLL files
 __pycache__/
 *.py[cod]
