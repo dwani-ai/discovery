@@ -148,3 +148,15 @@ curl -X POST https://discovery-api-XXXX.run.app/chat-with-document \
 Fork repo, apply Terraform, deploy in <30min. Full migration aligns with GCP RAG blueprints.  [github](https://github.com/dwani-ai/discovery)
 
 Discovery now runs natively on Google Cloud Platform (GCP) with Vertex AI for RAG/LLM, Vector Search for hybrid retrieval, and Cloud Run for serverless APIs—ideal for enterprise scale.  [github](https://github.com/dwani-ai/discovery)
+++
+
+# 1. Build & Deploy to Cloud Run
+gcloud builds submit --tag gcr.io/$PROJECT_ID/discovery-api
+gcloud run deploy discovery-api \
+  --image gcr.io/$PROJECT_ID/discovery-api \
+  --region us-central1 \
+  --set-env-vars GCP_PROJECT_ID=$PROJECT_ID,GCS_BUCKET_NAME=your-bucket,VECTOR_SEARCH_ENDPOINT_ID=projects/... \
+  --add-cloudsql-instances your-project:us-central1:discovery-db
+
+# 2. Test
+curl -X POST https://discovery-api-XXXX.run.app/files/upload -F "file=@test.pdf"
