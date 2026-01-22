@@ -56,6 +56,15 @@ Processing 1 million PDF pages costs **$1,350 on GCP** (pay-per-use, scales to z
 | Bursty (3M Q1, 0 Q2-4) | **$4,050** | **$57,840** | **93%** |
 | Growth (1M→10M) | **$43,000** | **$577,000** | **93%** |
 
+
+| H100 Hourly          | GPU Hours (1M pages) | Total Cost | vs GCP      |
+| -------------------- | -------------------- | ---------- | ----------- |
+| $1.00 (extreme spot) | 1,429                | $5,200     | 61% cheaper |
+| $1.50 (RunPod/Vast)  | 1,429                | $7,650     | 82% cheaper |
+| $2.00 (Lambda avg)   | 1,429                | $9,100     | 85% cheaper |
+| $3.00 (on-demand)    | 1,429                | $12,100    | 89% cheaper |
+
+
 ## Non-Financial Advantages (GCP)
 
 - **Zero ops**: No GPU quotas, patching, scaling, or downtime.
