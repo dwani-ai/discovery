@@ -2,8 +2,6 @@ Discovery - Agentic Intelligence Platform
 
 Try Demo :  [https://app.dwani.ai](https://app.dwani.ai)
 
-
-
 - How to setup Discovery 
     - for server
         - [README.md](backend/README.md)
@@ -14,6 +12,16 @@ Try Demo :  [https://app.dwani.ai](https://app.dwani.ai)
     - for VLM
         -  [README.md](vlm/README.md)
 
+
+- For GCP Setup- 
+    - [GCP README](gcp-READMe.md)
+
+
+ - Buy vs Build - [TCO Analysis](TCO-analysis.md)
+
+
+-  Example 
+    - [Real-estate Insurance Claim](examples/insurance/insurance-agent.md)
 
 - Features
     - Source audit  - done
