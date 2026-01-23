@@ -1,0 +1,10 @@
+fastapi==0.115.0
+uvicorn[standard]==0.30.6
+google-cloud-aiplatform==1.70.0
+google-cloud-storage==2.18.2
+google-cloud-documentai==1.22.0
+sqlalchemy[asyncio]==2.0.35
+psycopg2-binary==2.9.9  # For Cloud SQL
+python-multipart==0.0.9
+fpdf2==2.8.1
+rank_bm25==0.2.2
