@@ -2,19 +2,22 @@ import argparse
 import base64
 import enum
 import hashlib
+import json
 import logging
 import logging.config
 import os
+import tempfile
 import uuid
 from datetime import datetime
 from io import BytesIO
 from typing import List, Optional, Dict, Tuple
 
 import chromadb
+import dwani
 from chromadb.utils import embedding_functions
 from fastapi import FastAPI, UploadFile, HTTPException, BackgroundTasks, Depends, Body
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import StreamingResponse
+from fastapi.responses import StreamingResponse, FileResponse
 from fpdf import FPDF
 from openai import AsyncOpenAI
 from pdf2image import convert_from_bytes
@@ -54,6 +57,13 @@ logger = logging.getLogger("dwani_server")
 DWANI_API_BASE_URL = os.getenv("DWANI_API_BASE_URL")
 if not DWANI_API_BASE_URL:
     raise RuntimeError("DWANI_API_BASE_URL environment variable is required.")
+
+DWANI_API_KEY = os.getenv("DWANI_API_KEY")
+if not DWANI_API_KEY:
+    logger.warning("DWANI_API_KEY environment variable not set – audio podcast features will be disabled.")
+else:
+    dwani.api_key = DWANI_API_KEY
+    dwani.api_base = DWANI_API_BASE_URL
 
 FONT_PATH = os.path.join(os.path.dirname(__file__), "fonts", "DejaVuSans.ttf")
 if not os.path.exists(FONT_PATH):
@@ -97,6 +107,13 @@ class FileStatus(str, enum.Enum):
     FAILED = "failed"
 
 
+class PodcastStatus(str, enum.Enum):
+    PENDING = "pending"
+    PROCESSING = "processing"
+    COMPLETED = "completed"
+    FAILED = "failed"
+
+
 class FileRecord(Base):
     __tablename__ = "files"
     id = Column(String, primary_key=True)
@@ -104,6 +121,19 @@ class FileRecord(Base):
     content_type = Column(String)
     status = Column(String, default=FileStatus.PENDING)
     extracted_text = Column(Text, nullable=True)
+    error_message = Column(Text, nullable=True)
+    created_at = Column(DateTime, default=datetime.utcnow)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+
+class PodcastRecord(Base):
+    __tablename__ = "podcasts"
+    id = Column(String, primary_key=True)
+    title = Column(String, index=True)
+    file_ids = Column(Text)  # JSON encoded list of FileRecord IDs
+    status = Column(String, default=PodcastStatus.PENDING)
+    script = Column(Text, nullable=True)
+    audio_path = Column(String, nullable=True)
     error_message = Column(Text, nullable=True)
     created_at = Column(DateTime, default=datetime.utcnow)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
@@ -150,6 +180,31 @@ class FileRetrieveResponse(BaseModel):
     filename: str
     status: str
     extracted_text: Optional[str] = None
+    error_message: Optional[str] = None
+    created_at: datetime
+    updated_at: datetime
+
+
+class PodcastCreateRequest(BaseModel):
+    file_ids: List[str]
+    title: Optional[str] = None
+    style: Optional[str] = "explainer"
+    duration_minutes: Optional[int] = 20
+    language: Optional[str] = "en"
+
+
+class PodcastCreateResponse(BaseModel):
+    podcast_id: str
+    status: str
+    message: str
+
+
+class PodcastRetrieveResponse(BaseModel):
+    podcast_id: str
+    title: str
+    file_ids: List[str]
+    status: str
+    audio_url: Optional[str] = None
     error_message: Optional[str] = None
     created_at: datetime
     updated_at: datetime
@@ -214,6 +269,117 @@ def encode_image(image: Image.Image) -> str:
     return base64.b64encode(buf.getvalue()).decode("utf-8")
 
 
+async def generate_podcast_script(
+    file_ids: List[str],
+    style: str,
+    duration_minutes: int,
+    language: str,
+    db: Session,
+) -> str:
+    """
+    Generate a NotebookLM-style podcast script summarizing the selected documents.
+    """
+    # Ensure all files exist and are completed
+    records = db.query(FileRecord).filter(FileRecord.id.in_(file_ids)).all()
+    if len(records) != len(file_ids):
+        raise HTTPException(status_code=404, detail="Some files not found")
+
+    for r in records:
+        if r.status != FileStatus.COMPLETED:
+            raise HTTPException(status_code=400, detail=f"File {r.filename} not processed")
+
+    # Use a broad pseudo-question to pull diverse context
+    pseudo_question = "Summarize the main points from these documents and structure them into an engaging conversation."
+
+    vector_results = collection.query(
+        query_embeddings=embedding_function([pseudo_question]),
+        n_results=40,
+        where={"file_id": {"$in": file_ids}},
+        include=["documents", "metadatas", "distances"],
+    )
+
+    docs = vector_results.get("documents", [[]])[0] if vector_results.get("documents") else []
+    metas = vector_results.get("metadatas", [[]])[0] if vector_results.get("metadatas") else []
+
+    context_parts: List[str] = []
+    current_tokens = 0
+
+    for doc, meta in zip(docs, metas):
+        estimated_tokens = int(len(doc.split()) * 1.3)
+        if current_tokens + estimated_tokens > MAX_CONTEXT_TOKENS:
+            break
+        filename = meta.get("filename", "Unknown Document")
+        page_start = meta.get("page_start")
+        page_end = meta.get("page_end")
+        page_info = ""
+        if page_start is not None and page_end is not None:
+            if page_start == page_end:
+                page_info = f"(Page {page_start})"
+            else:
+                page_info = f"(Pages {page_start}–{page_end})"
+
+        context_parts.append(f"[{filename} {page_info}]\n{doc}")
+        current_tokens += estimated_tokens
+
+    context = "\n\n".join(context_parts) if context_parts else "No relevant content could be retrieved from the documents."
+
+    approx_tokens = min(duration_minutes * 150, 4000)
+
+    system_prompt = f"""
+You are creating a podcast episode transcript in {language}.
+
+Create a natural, engaging dialogue between two hosts, "Host A" and "Host B",
+that explains and discusses the key ideas from the following documents.
+
+- Style: {style}
+- Target length: about {duration_minutes} minutes of spoken audio.
+- Refer to document names and pages when relevant (e.g., "According to Contract.pdf, page 3...").
+- Do not read the documents verbatim; instead summarize, explain, and discuss.
+
+Documents context:
+{context}
+"""
+
+    client = get_openai_client()
+    response = await client.chat.completions.create(
+        model="gemma3",
+        messages=[{"role": "system", "content": system_prompt}],
+        temperature=0.8,
+        max_tokens=approx_tokens,
+    )
+    script = response.choices[0].message.content.strip()
+    return script
+
+
+def generate_podcast_audio(script: str, podcast_id: str, language: str = "english") -> str:
+    """
+    Use dwani Audio.speech to generate an mp3 file for the podcast script.
+    Returns the absolute path to the saved audio file.
+    """
+    if not DWANI_API_KEY:
+        raise RuntimeError("DWANI_API_KEY is not set – audio generation is disabled.")
+
+    base_dir = os.path.join(os.getcwd(), "podcasts")
+    os.makedirs(base_dir, exist_ok=True)
+
+    output_path = os.path.join(base_dir, f"{podcast_id}.mp3")
+
+    # dwani.Audio.speech returns raw audio bytes
+    audio_bytes = dwani.Audio.speech(
+        input=script,
+        response_format="mp3",
+        language=language,
+    )
+
+    # Write to a temp file first, then move into place to avoid partial writes
+    with tempfile.NamedTemporaryFile(delete=False, suffix=".mp3") as tmp:
+        tmp.write(audio_bytes)
+        tmp_path = tmp.name
+
+    os.replace(tmp_path, output_path)
+    return output_path
+
+
 async def pdf_to_images(pdf_bytes: bytes) -> List[Image.Image]:
     try:
         return convert_from_bytes(pdf_bytes, fmt="png")
@@ -226,7 +392,8 @@ def get_openai_client(model: str = "gemma3") -> AsyncOpenAI:
     valid_models = {"gemma3", "gpt-oss"}
     if model not in valid_models:
         raise ValueError(f"Invalid model: {model}")
-    return AsyncOpenAI(api_key="http", base_url=DWANI_API_BASE_URL)
+    
+    return AsyncOpenAI(api_key="http", base_url="https://qwen.dwani.ai/v1")
 
 
 # ========================= SERVICES =========================
@@ -339,6 +506,44 @@ async def background_extraction_task(file_id: str, pdf_bytes: bytes, filename: s
         logger.error(f"Extraction failed for {file_id}: {e}")
     finally:
         file_record.updated_at = datetime.utcnow()
+        db.commit()
+
+
+async def background_podcast_task(podcast_id: str, request: PodcastCreateRequest, db: Session):
+    """
+    Background task to generate a podcast script and corresponding audio file.
+    """
+    podcast = db.query(PodcastRecord).filter(PodcastRecord.id == podcast_id).first()
+    if not podcast:
+        return
+
+    podcast.status = PodcastStatus.PROCESSING
+    db.commit()
+
+    try:
+        script = await generate_podcast_script(
+            file_ids=request.file_ids,
+            style=request.style or "explainer",
+            duration_minutes=request.duration_minutes or 20,
+            language=request.language or "en",
+            db=db,
+        )
+        podcast.script = script
+        db.commit()
+
+        audio_path = generate_podcast_audio(
+            script=script,
+            podcast_id=podcast_id,
+            language=request.language or "en",
+        )
+        podcast.audio_path = audio_path
+        podcast.status = PodcastStatus.COMPLETED
+    except Exception as e:
+        podcast.status = PodcastStatus.FAILED
+        podcast.error_message = str(e)
+        logger.error(f"Podcast generation failed for {podcast_id}: {e}")
+    finally:
+        podcast.updated_at = datetime.utcnow()
         db.commit()
 
 
@@ -513,6 +718,84 @@ def list_files(limit: int = 20, db: Session = Depends(get_db)):
         }
         for f in files
     ]
+
+
+# ========================= PODCAST ROUTES =========================
+
+
+@app.post("/podcasts", response_model=PodcastCreateResponse, tags=["Podcasts"])
+async def create_podcast(
+    request: PodcastCreateRequest,
+    background_tasks: BackgroundTasks,
+    db: Session = Depends(get_db),
+):
+    if not request.file_ids:
+        raise HTTPException(status_code=400, detail="file_ids required")
+
+    # Validate files exist and are processed
+    records = db.query(FileRecord).filter(FileRecord.id.in_(request.file_ids)).all()
+    if len(records) != len(request.file_ids):
+        raise HTTPException(status_code=404, detail="Some files not found")
+    for r in records:
+        if r.status != FileStatus.COMPLETED:
+            raise HTTPException(status_code=400, detail=f"File {r.filename} not processed")
+
+    podcast_id = str(uuid.uuid4())
+    podcast = PodcastRecord(
+        id=podcast_id,
+        title=request.title or "AI Podcast",
+        file_ids=json.dumps(request.file_ids),
+        status=PodcastStatus.PENDING,
+    )
+    db.add(podcast)
+    db.commit()
+
+    background_tasks.add_task(background_podcast_task, podcast_id, request, db)
+
+    return PodcastCreateResponse(
+        podcast_id=podcast_id,
+        status=podcast.status,
+        message="Podcast generation started.",
+    )
+
+
+@app.get("/podcasts/{podcast_id}", response_model=PodcastRetrieveResponse, tags=["Podcasts"])
+def get_podcast(podcast_id: str, db: Session = Depends(get_db)):
+    podcast = db.query(PodcastRecord).filter(PodcastRecord.id == podcast_id).first()
+    if not podcast:
+        raise HTTPException(status_code=404, detail="Podcast not found")
+
+    audio_url = None
+    if podcast.audio_path and podcast.status == PodcastStatus.COMPLETED:
+        audio_url = f"/podcasts/{podcast_id}/audio"
+
+    return PodcastRetrieveResponse(
+        podcast_id=podcast.id,
+        title=podcast.title,
+        file_ids=json.loads(podcast.file_ids) if podcast.file_ids else [],
+        status=podcast.status,
+        audio_url=audio_url,
+        error_message=podcast.error_message,
+        created_at=podcast.created_at,
+        updated_at=podcast.updated_at,
+    )
+
+
+@app.get("/podcasts/{podcast_id}/audio", tags=["Podcasts"])
+def stream_podcast_audio(podcast_id: str, db: Session = Depends(get_db)):
+    podcast = db.query(PodcastRecord).filter(PodcastRecord.id == podcast_id).first()
+    if not podcast:
+        raise HTTPException(status_code=404, detail="Podcast not found")
+    if podcast.status != PodcastStatus.COMPLETED or not podcast.audio_path:
+        raise HTTPException(status_code=400, detail="Podcast not ready yet")
+    if not os.path.exists(podcast.audio_path):
+        raise HTTPException(status_code=404, detail="Audio file missing on server")
+
+    return FileResponse(
+        podcast.audio_path,
+        media_type="audio/mpeg",
+        filename=os.path.basename(podcast.audio_path),
+    )
 
 
 @app.post("/chat-with-document", tags=["Files"])
