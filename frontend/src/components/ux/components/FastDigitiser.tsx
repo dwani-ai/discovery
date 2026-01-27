@@ -680,75 +680,45 @@ export default function Digitiser() {
           <IconButton onClick={() => setDrawerOpen(true)}>
             <MenuIcon />
           </IconButton>
-          <Typography variant="h5">dwani.ai – Document Intelligence</Typography>
+          <Typography variant="h5">dwani.ai – Notebooks & Document Intelligence</Typography>
         </Stack>
 
-        {/* Selection Actions */}
-        {selectedFileIds.size > 0 && (
-          <Alert severity="info" action={
-            <Stack direction="row" spacing={1}>
+        {/* Notebooks – now the primary workspace entry point */}
+        <Paper elevation={2} sx={{ p: 2, mb: 2 }}>
+          <Stack direction={{ xs: 'column', md: 'row' }} spacing={2} alignItems={{ xs: 'flex-start', md: 'center' }}>
+            <Box flex={1}>
+              <Typography variant="h6" gutterBottom>
+                Your Notebooks
+              </Typography>
+              <Typography variant="body2" color="text.secondary">
+                Notebooks group related documents, chats, summaries, and podcasts into a single workspace.
+              </Typography>
+            </Box>
+            <Box>
               <Button
-                startIcon={<PictureAsPdfIcon />}
-                onClick={() => downloadMergedPdf(Array.from(selectedFileIds))}
-                disabled={selectedCompleted.length === 0}
-              >
-                Merge PDF ({selectedCompleted.length})
-              </Button>
-              <Button
-                startIcon={<DeleteIcon />}
-                color="error"
-                onClick={() => {
-                  setFilesToDelete(Array.from(selectedFileIds));
-                  setDeleteDialogOpen(true);
-                }}
-              >
-                Delete ({selectedFileIds.size})
-              </Button>
-              <Button
+                variant="contained"
                 onClick={() => {
                   setNewNotebookName('');
                   setNotebookDialogOpen(true);
                 }}
                 disabled={selectedCompleted.length === 0}
               >
-                Create Notebook
+                Create Notebook from selection
               </Button>
-              <Button
-                startIcon={<PodcastIcon />}
-                onClick={() =>
-                  createPodcast(
-                    selectedCompleted.map(f => f.file_id),
-                    `Podcast: ${selectedCompleted.length} documents`,
-                  )
-                }
-                disabled={selectedCompleted.length === 0 || creatingPodcast}
-              >
-                {creatingPodcast ? 'Creating podcast...' : `Create Podcast (${selectedCompleted.length})`}
-              </Button>
-              <Button
-                onClick={() => openChat(selectedCompleted.map(f => f.file_id), selectedCompleted.map(f => f.filename))}
-                disabled={selectedCompleted.length === 0}
-              >
-                Chat ({selectedCompleted.length})
-              </Button>
-            </Stack>
-          }>
-            {selectedFileIds.size} document{selectedFileIds.size > 1 ? 's' : ''} selected
-          </Alert>
-        )}
+              {selectedCompleted.length === 0 && (
+                <Typography variant="caption" display="block" color="text.secondary">
+                  Select one or more ready documents below to enable.
+                </Typography>
+              )}
+            </Box>
+          </Stack>
 
-        {/* Notebooks Overview */}
-        <Paper elevation={1} sx={{ p: 2, mb: 2 }}>
-          <Typography variant="h6" gutterBottom>
-            Your Notebooks
-          </Typography>
           {notebooks.length === 0 ? (
-            <Typography variant="body2" color="text.secondary">
-              No notebooks yet. Select one or more completed documents above and click{' '}
-              <strong>Create Notebook</strong> to get started.
+            <Typography variant="body2" color="text.secondary" sx={{ mt: 2 }}>
+              No notebooks yet. Once you select some completed documents, create your first notebook here.
             </Typography>
           ) : (
-            <Stack direction="row" spacing={1} flexWrap="wrap">
+            <Stack direction="row" spacing={1} flexWrap="wrap" sx={{ mt: 2 }}>
               {notebooks.map(nb => {
                 const filesInNotebook = completedFiles.filter(f => nb.fileIds.includes(f.file_id));
                 const label = `${nb.name} • ${filesInNotebook.length} doc${filesInNotebook.length === 1 ? '' : 's'}`;
@@ -781,6 +751,51 @@ export default function Digitiser() {
             </Stack>
           )}
         </Paper>
+
+        {/* Selection Actions – focused on bulk operations */}
+        {selectedFileIds.size > 0 && (
+          <Alert severity="info" action={
+            <Stack direction="row" spacing={1}>
+              <Button
+                startIcon={<PictureAsPdfIcon />}
+                onClick={() => downloadMergedPdf(Array.from(selectedFileIds))}
+                disabled={selectedCompleted.length === 0}
+              >
+                Merge PDF ({selectedCompleted.length})
+              </Button>
+              <Button
+                startIcon={<DeleteIcon />}
+                color="error"
+                onClick={() => {
+                  setFilesToDelete(Array.from(selectedFileIds));
+                  setDeleteDialogOpen(true);
+                }}
+              >
+                Delete ({selectedFileIds.size})
+              </Button>
+              <Button
+                startIcon={<PodcastIcon />}
+                onClick={() =>
+                  createPodcast(
+                    selectedCompleted.map(f => f.file_id),
+                    `Podcast: ${selectedCompleted.length} documents`,
+                  )
+                }
+                disabled={selectedCompleted.length === 0 || creatingPodcast}
+              >
+                {creatingPodcast ? 'Creating podcast...' : `Create Podcast (${selectedCompleted.length})`}
+              </Button>
+              <Button
+                onClick={() => openChat(selectedCompleted.map(f => f.file_id), selectedCompleted.map(f => f.filename))}
+                disabled={selectedCompleted.length === 0}
+              >
+                Chat ({selectedCompleted.length})
+              </Button>
+            </Stack>
+          }>
+            {selectedFileIds.size} document{selectedFileIds.size > 1 ? 's' : ''} selected
+          </Alert>
+        )}
 
         {/* Documents Header – with new "Search across all documents" button */}
         <Box display="flex" justifyContent="space-between" alignItems="center" mb={2}>
