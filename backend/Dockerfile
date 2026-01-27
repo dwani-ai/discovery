@@ -43,8 +43,8 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     && rm -rf /var/lib/apt/lists/*
 
 # Optional: non-root user (good practice)
-RUN useradd -m -u 1000 appuser
-USER appuser
+#RUN useradd -m -u 1000 appuser
+#USER appuser
 
 # Copy pure python packages from builder
 COPY --from=builder /install /usr/local
