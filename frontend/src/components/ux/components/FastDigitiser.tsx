@@ -718,37 +718,76 @@ export default function Digitiser() {
               No notebooks yet. Once you select some completed documents, create your first notebook here.
             </Typography>
           ) : (
-            <Stack direction="row" spacing={1} flexWrap="wrap" sx={{ mt: 2 }}>
-              {notebooks.map(nb => {
-                const filesInNotebook = completedFiles.filter(f => nb.fileIds.includes(f.file_id));
-                const label = `${nb.name} • ${filesInNotebook.length} doc${filesInNotebook.length === 1 ? '' : 's'}`;
-                return (
-                  <Chip
-                    key={nb.id}
-                    label={label}
-                    onClick={() => {
-                      setActiveNotebookId(nb.id);
-                      setNotebookTab(0);
-                      setNotebookWorkspaceOpen(true);
-                    }}
-                    onDelete={() => {
-                      const deleteNotebook = async () => {
-                        try {
-                          await fetch(`${API_BASE}/notebooks/${nb.id}`, {
-                            method: 'DELETE',
-                            headers: { 'X-API-KEY': API_KEY || '' },
-                          });
-                        } finally {
-                          setNotebooks(prev => prev.filter(n => n.id !== nb.id));
-                        }
-                      };
-                      void deleteNotebook();
-                    }}
-                    sx={{ mb: 1 }}
-                  />
-                );
-              })}
-            </Stack>
+            <TableContainer component={Paper} variant="outlined" sx={{ mt: 2 }}>
+              <Table size="small">
+                <TableHead>
+                  <TableRow>
+                    <TableCell><strong>Name</strong></TableCell>
+                    <TableCell><strong>Documents</strong></TableCell>
+                    <TableCell><strong>Created</strong></TableCell>
+                    <TableCell align="right"><strong>Actions</strong></TableCell>
+                  </TableRow>
+                </TableHead>
+                <TableBody>
+                  {notebooks.map(nb => {
+                    const filesInNotebook = completedFiles.filter(f => nb.fileIds.includes(f.file_id));
+                    return (
+                      <TableRow key={nb.id} hover>
+                        <TableCell>
+                          <Typography variant="body2" fontWeight={500}>
+                            {nb.name}
+                          </Typography>
+                        </TableCell>
+                        <TableCell>
+                          <Typography variant="body2">
+                            {filesInNotebook.length} doc{filesInNotebook.length === 1 ? '' : 's'}
+                          </Typography>
+                        </TableCell>
+                        <TableCell>
+                          <Typography variant="body2">
+                            {formatDate(nb.createdAt)}
+                          </Typography>
+                        </TableCell>
+                        <TableCell align="right">
+                          <Stack direction="row" spacing={1} justifyContent="flex-end">
+                            <Button
+                              size="small"
+                              variant="outlined"
+                              onClick={() => {
+                                setActiveNotebookId(nb.id);
+                                setNotebookTab(0);
+                                setNotebookWorkspaceOpen(true);
+                              }}
+                            >
+                              Open
+                            </Button>
+                            <Button
+                              size="small"
+                              color="error"
+                              onClick={() => {
+                                const deleteNotebook = async () => {
+                                  try {
+                                    await fetch(`${API_BASE}/notebooks/${nb.id}`, {
+                                      method: 'DELETE',
+                                      headers: { 'X-API-KEY': API_KEY || '' },
+                                    });
+                                  } finally {
+                                    setNotebooks(prev => prev.filter(n => n.id !== nb.id));
+                                  }
+                                };
+                                void deleteNotebook();
+                              }}
+                            >
+                              Delete
+                            </Button>
+                          </Stack>
+                        </TableCell>
+                      </TableRow>
+                    );
+                  })}
+                </TableBody>
+              </Table>
+            </TableContainer>
           )}
         </Paper>
 
