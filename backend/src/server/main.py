@@ -55,6 +55,9 @@ logging.config.dictConfig({
 logger = logging.getLogger("dwani_server")
 
 DWANI_API_BASE_URL = os.getenv("DWANI_API_BASE_URL")
+
+DWANI_API_BASE_URL_LLM = os.getenv("DWANI_API_BASE_URL_LLM")
+
 if not DWANI_API_BASE_URL:
     raise RuntimeError("DWANI_API_BASE_URL environment variable is required.")
 
@@ -139,6 +142,15 @@ class PodcastRecord(Base):
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
 
 
+class NotebookRecord(Base):
+    __tablename__ = "notebooks"
+    id = Column(String, primary_key=True)
+    name = Column(String, index=True)
+    file_ids = Column(Text)  # JSON encoded list of FileRecord IDs
+    created_at = Column(DateTime, default=datetime.utcnow)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+
 Base.metadata.create_all(bind=engine)
 
 
@@ -206,6 +218,19 @@ class PodcastRetrieveResponse(BaseModel):
     status: str
     audio_url: Optional[str] = None
     error_message: Optional[str] = None
+    created_at: datetime
+    updated_at: datetime
+
+
+class NotebookCreateRequest(BaseModel):
+    name: str
+    file_ids: List[str]
+
+
+class NotebookResponse(BaseModel):
+    notebook_id: str
+    name: str
+    file_ids: List[str]
     created_at: datetime
     updated_at: datetime
 
@@ -393,7 +418,7 @@ def get_openai_client(model: str = "gemma3") -> AsyncOpenAI:
     if model not in valid_models:
         raise ValueError(f"Invalid model: {model}")
     
-    return AsyncOpenAI(api_key="http", base_url="https://qwen.dwani.ai/v1")
+    return AsyncOpenAI(api_key="http", base_url=DWANI_API_BASE_URL_LLM)
 
 
 # ========================= SERVICES =========================
@@ -740,11 +765,36 @@ async def create_podcast(
         if r.status != FileStatus.COMPLETED:
             raise HTTPException(status_code=400, detail=f"File {r.filename} not processed")
 
+    # If a podcast for the same set of documents already exists (or is in progress),
+    # return that instead of creating a new one.
+    requested_ids_set = set(request.file_ids)
+    existing_podcasts = db.query(PodcastRecord).filter(
+        PodcastRecord.status != PodcastStatus.FAILED
+    ).all()
+
+    for p in existing_podcasts:
+        try:
+            stored_ids = json.loads(p.file_ids) if p.file_ids else []
+        except Exception:
+            continue
+        if set(stored_ids) == requested_ids_set:
+            # Reuse existing podcast
+            message = (
+                "Podcast already generated."
+                if p.status == PodcastStatus.COMPLETED
+                else "Podcast generation already in progress."
+            )
+            return PodcastCreateResponse(
+                podcast_id=p.id,
+                status=p.status,
+                message=message,
+            )
+
     podcast_id = str(uuid.uuid4())
     podcast = PodcastRecord(
         id=podcast_id,
         title=request.title or "AI Podcast",
-        file_ids=json.dumps(request.file_ids),
+        file_ids=json.dumps(sorted(request.file_ids)),
         status=PodcastStatus.PENDING,
     )
     db.add(podcast)
@@ -796,6 +846,64 @@ def stream_podcast_audio(podcast_id: str, db: Session = Depends(get_db)):
         media_type="audio/mpeg",
         filename=os.path.basename(podcast.audio_path),
     )
+
+
+# ========================= NOTEBOOK ROUTES =========================
+
+
+@app.get("/notebooks", response_model=List[NotebookResponse], tags=["Notebooks"])
+def list_notebooks(db: Session = Depends(get_db)):
+    notebooks = db.query(NotebookRecord).order_by(NotebookRecord.created_at.desc()).all()
+    return [
+        NotebookResponse(
+            notebook_id=n.id,
+            name=n.name,
+            file_ids=json.loads(n.file_ids) if n.file_ids else [],
+            created_at=n.created_at,
+            updated_at=n.updated_at,
+        )
+        for n in notebooks
+    ]
+
+
+@app.post("/notebooks", response_model=NotebookResponse, tags=["Notebooks"])
+def create_notebook(request: NotebookCreateRequest, db: Session = Depends(get_db)):
+    if not request.file_ids:
+        raise HTTPException(status_code=400, detail="file_ids required")
+
+    # Validate files exist
+    records = db.query(FileRecord).filter(FileRecord.id.in_(request.file_ids)).all()
+    if len(records) != len(request.file_ids):
+        raise HTTPException(status_code=404, detail="Some files not found")
+
+    notebook_id = str(uuid.uuid4())
+    notebook = NotebookRecord(
+        id=notebook_id,
+        name=request.name.strip() or "Untitled Notebook",
+        file_ids=json.dumps(sorted(request.file_ids)),
+    )
+    db.add(notebook)
+    db.commit()
+    db.refresh(notebook)
+
+    return NotebookResponse(
+        notebook_id=notebook.id,
+        name=notebook.name,
+        file_ids=json.loads(notebook.file_ids) if notebook.file_ids else [],
+        created_at=notebook.created_at,
+        updated_at=notebook.updated_at,
+    )
+
+
+@app.delete("/notebooks/{notebook_id}", tags=["Notebooks"])
+def delete_notebook(notebook_id: str, db: Session = Depends(get_db)):
+    notebook = db.query(NotebookRecord).filter(NotebookRecord.id == notebook_id).first()
+    if not notebook:
+        raise HTTPException(status_code=404, detail="Notebook not found")
+
+    db.delete(notebook)
+    db.commit()
+    return {"message": "Notebook deleted successfully"}
 
 
 @app.post("/chat-with-document", tags=["Files"])
