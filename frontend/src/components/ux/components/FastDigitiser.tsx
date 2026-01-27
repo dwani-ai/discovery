@@ -57,7 +57,6 @@ import Highlight from 'react-highlight-words';
 const API_BASE = import.meta.env.VITE_DWANI_API_BASE_URL || 'https://discovery-server.dwani.ai';
 const API_KEY = import.meta.env.VITE_DWANI_API_KEY;
 const STORAGE_KEY = 'dwani_conversations';
-const NOTEBOOKS_STORAGE_KEY = 'dwani_notebooks';
 const GLOBAL_CHAT_ID = 'global-all-documents';
 
 interface UploadedFile {
@@ -113,7 +112,8 @@ interface Notebook {
   id: string;
   name: string;
   fileIds: string[];
-  createdAt: number;
+  createdAt: string;
+  updatedAt: string;
 }
 
 // ======================= Custom Hook: useDocumentManager =======================
@@ -456,7 +456,6 @@ export default function Digitiser() {
   const [podcastError, setPodcastError] = useState<string | null>(null);
 
   const [notebooks, setNotebooks] = useState<Notebook[]>([]);
-  const [notebooksHydrated, setNotebooksHydrated] = useState(false);
   const [notebookDialogOpen, setNotebookDialogOpen] = useState(false);
   const [newNotebookName, setNewNotebookName] = useState('');
   const [activeNotebookId, setActiveNotebookId] = useState<string | null>(null);
@@ -478,29 +477,35 @@ export default function Digitiser() {
     error?: string;
   };
 
-  // Load / persist notebooks in localStorage
+  // Load notebooks from backend
   useEffect(() => {
-    try {
-      const raw = window.localStorage.getItem(NOTEBOOKS_STORAGE_KEY);
-      if (raw) {
-        const parsed: Notebook[] = JSON.parse(raw);
-        setNotebooks(parsed);
+    const loadNotebooks = async () => {
+      try {
+        const res = await fetch(`${API_BASE}/notebooks`, {
+          headers: { 'X-API-KEY': API_KEY || '' },
+        });
+        if (!res.ok) return;
+        const data: {
+          notebook_id: string;
+          name: string;
+          file_ids: string[];
+          created_at: string;
+          updated_at: string;
+        }[] = await res.json();
+        const mapped: Notebook[] = data.map(n => ({
+          id: n.notebook_id,
+          name: n.name,
+          fileIds: n.file_ids,
+          createdAt: n.created_at,
+          updatedAt: n.updated_at,
+        }));
+        setNotebooks(mapped);
+      } catch {
+        // ignore errors; notebooks are a convenience feature
       }
-    } catch {
-      // ignore malformed storage
-    } finally {
-      setNotebooksHydrated(true);
-    }
+    };
+    loadNotebooks();
   }, []);
-
-  useEffect(() => {
-    if (!notebooksHydrated) return;
-    try {
-      window.localStorage.setItem(NOTEBOOKS_STORAGE_KEY, JSON.stringify(notebooks));
-    } catch {
-      // ignore storage errors
-    }
-  }, [notebooks, notebooksHydrated]);
 
   const pollPodcastStatus = useCallback((podcastId: string) => {
     let isCancelled = false;
@@ -626,20 +631,41 @@ export default function Digitiser() {
 
     const name = trimmedName || defaultName;
 
-    const id =
-      (window.crypto && 'randomUUID' in window.crypto
-        ? window.crypto.randomUUID()
-        : `nb-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`);
-
-    const notebook: Notebook = {
-      id,
-      name,
-      fileIds,
-      createdAt: Date.now(),
+    const create = async () => {
+      try {
+        const res = await fetch(`${API_BASE}/notebooks`, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'X-API-KEY': API_KEY || '',
+          },
+          body: JSON.stringify({
+            name,
+            file_ids: fileIds,
+          }),
+        });
+        if (!res.ok) return;
+        const data: {
+          notebook_id: string;
+          name: string;
+          file_ids: string[];
+          created_at: string;
+          updated_at: string;
+        } = await res.json();
+        const notebook: Notebook = {
+          id: data.notebook_id,
+          name: data.name,
+          fileIds: data.file_ids,
+          createdAt: data.created_at,
+          updatedAt: data.updated_at,
+        };
+        setNotebooks(prev => [notebook, ...prev]);
+      } finally {
+        setNotebookDialogOpen(false);
+      }
     };
 
-    setNotebooks(prev => [notebook, ...prev]);
-    setNotebookDialogOpen(false);
+    void create();
   };
 
   const activeNotebook = activeNotebookId
@@ -736,7 +762,17 @@ export default function Digitiser() {
                       setNotebookWorkspaceOpen(true);
                     }}
                     onDelete={() => {
-                      setNotebooks(prev => prev.filter(n => n.id !== nb.id));
+                      const deleteNotebook = async () => {
+                        try {
+                          await fetch(`${API_BASE}/notebooks/${nb.id}`, {
+                            method: 'DELETE',
+                            headers: { 'X-API-KEY': API_KEY || '' },
+                          });
+                        } finally {
+                          setNotebooks(prev => prev.filter(n => n.id !== nb.id));
+                        }
+                      };
+                      void deleteNotebook();
                     }}
                     sx={{ mb: 1 }}
                   />

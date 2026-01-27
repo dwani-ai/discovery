@@ -142,6 +142,15 @@ class PodcastRecord(Base):
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
 
 
+class NotebookRecord(Base):
+    __tablename__ = "notebooks"
+    id = Column(String, primary_key=True)
+    name = Column(String, index=True)
+    file_ids = Column(Text)  # JSON encoded list of FileRecord IDs
+    created_at = Column(DateTime, default=datetime.utcnow)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+
 Base.metadata.create_all(bind=engine)
 
 
@@ -209,6 +218,19 @@ class PodcastRetrieveResponse(BaseModel):
     status: str
     audio_url: Optional[str] = None
     error_message: Optional[str] = None
+    created_at: datetime
+    updated_at: datetime
+
+
+class NotebookCreateRequest(BaseModel):
+    name: str
+    file_ids: List[str]
+
+
+class NotebookResponse(BaseModel):
+    notebook_id: str
+    name: str
+    file_ids: List[str]
     created_at: datetime
     updated_at: datetime
 
@@ -824,6 +846,64 @@ def stream_podcast_audio(podcast_id: str, db: Session = Depends(get_db)):
         media_type="audio/mpeg",
         filename=os.path.basename(podcast.audio_path),
     )
+
+
+# ========================= NOTEBOOK ROUTES =========================
+
+
+@app.get("/notebooks", response_model=List[NotebookResponse], tags=["Notebooks"])
+def list_notebooks(db: Session = Depends(get_db)):
+    notebooks = db.query(NotebookRecord).order_by(NotebookRecord.created_at.desc()).all()
+    return [
+        NotebookResponse(
+            notebook_id=n.id,
+            name=n.name,
+            file_ids=json.loads(n.file_ids) if n.file_ids else [],
+            created_at=n.created_at,
+            updated_at=n.updated_at,
+        )
+        for n in notebooks
+    ]
+
+
+@app.post("/notebooks", response_model=NotebookResponse, tags=["Notebooks"])
+def create_notebook(request: NotebookCreateRequest, db: Session = Depends(get_db)):
+    if not request.file_ids:
+        raise HTTPException(status_code=400, detail="file_ids required")
+
+    # Validate files exist
+    records = db.query(FileRecord).filter(FileRecord.id.in_(request.file_ids)).all()
+    if len(records) != len(request.file_ids):
+        raise HTTPException(status_code=404, detail="Some files not found")
+
+    notebook_id = str(uuid.uuid4())
+    notebook = NotebookRecord(
+        id=notebook_id,
+        name=request.name.strip() or "Untitled Notebook",
+        file_ids=json.dumps(sorted(request.file_ids)),
+    )
+    db.add(notebook)
+    db.commit()
+    db.refresh(notebook)
+
+    return NotebookResponse(
+        notebook_id=notebook.id,
+        name=notebook.name,
+        file_ids=json.loads(notebook.file_ids) if notebook.file_ids else [],
+        created_at=notebook.created_at,
+        updated_at=notebook.updated_at,
+    )
+
+
+@app.delete("/notebooks/{notebook_id}", tags=["Notebooks"])
+def delete_notebook(notebook_id: str, db: Session = Depends(get_db)):
+    notebook = db.query(NotebookRecord).filter(NotebookRecord.id == notebook_id).first()
+    if not notebook:
+        raise HTTPException(status_code=404, detail="Notebook not found")
+
+    db.delete(notebook)
+    db.commit()
+    return {"message": "Notebook deleted successfully"}
 
 
 @app.post("/chat-with-document", tags=["Files"])
