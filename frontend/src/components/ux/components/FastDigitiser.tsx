@@ -47,7 +47,8 @@ import {
   Clear as ClearIcon,
   Description as DescriptionIcon,
   ExpandMore as ExpandMoreIcon,
-  Search as SearchIcon,           // ← added
+  Search as SearchIcon,
+  GraphicEq as PodcastIcon,
 } from '@mui/icons-material';
 import Highlight from 'react-highlight-words';
 
@@ -92,6 +93,17 @@ interface Conversation {
   lastUpdated: number;
   preview: string;
   isGlobal?: boolean;
+}
+
+interface Podcast {
+  podcast_id: string;
+  title: string;
+  file_ids: string[];
+  status: 'pending' | 'processing' | 'completed' | 'failed';
+  audio_url?: string;
+  error_message?: string;
+  created_at: string;
+  updated_at: string;
 }
 
 // ======================= Custom Hook: useDocumentManager =======================
@@ -429,6 +441,10 @@ export default function Digitiser() {
   const [userMessage, setUserMessage] = useState('');
   const [filesToDelete, setFilesToDelete] = useState<string[]>([]);
 
+  const [currentPodcast, setCurrentPodcast] = useState<Podcast | null>(null);
+  const [creatingPodcast, setCreatingPodcast] = useState(false);
+  const [podcastError, setPodcastError] = useState<string | null>(null);
+
   // Deduplicated file list with proper type handling
   const serverFileMap = new Map<string, UploadedFile>();
   uploadedFiles.forEach(f => serverFileMap.set(f.file_id, f));
@@ -443,6 +459,73 @@ export default function Digitiser() {
     source: 'server' | 'local';
     error?: string;
   };
+
+  const pollPodcastStatus = useCallback((podcastId: string) => {
+    let isCancelled = false;
+
+    const poll = async () => {
+      if (isCancelled) return;
+      try {
+        const res = await fetch(`${API_BASE}/podcasts/${podcastId}`, {
+          headers: { 'X-API-KEY': API_KEY || '' },
+        });
+        if (!res.ok) return;
+        const meta: Podcast = await res.json();
+        setCurrentPodcast(meta);
+        if (meta.status === 'completed' || meta.status === 'failed') {
+          return;
+        }
+      } catch {
+        // ignore transient polling errors; final state will be visible
+      }
+      if (!isCancelled) {
+        setTimeout(poll, 5000);
+      }
+    };
+
+    poll();
+    return () => {
+      isCancelled = true;
+    };
+  }, []);
+
+  const createPodcast = useCallback(
+    async (fileIds: string[], title?: string) => {
+      if (!fileIds.length || creatingPodcast) return;
+      setCreatingPodcast(true);
+      setPodcastError(null);
+
+      try {
+        const res = await fetch(`${API_BASE}/podcasts`, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'X-API-KEY': API_KEY || '',
+          },
+          body: JSON.stringify({
+            file_ids: fileIds,
+            title: title || `Podcast: ${fileIds.length} document${fileIds.length > 1 ? 's' : ''}`,
+            style: 'explainer',
+            duration_minutes: 20,
+            language: 'english',
+          }),
+        });
+
+        if (!res.ok) {
+          const err = await res.json().catch(() => ({}));
+          throw new Error(err.detail || 'Failed to start podcast generation');
+        }
+
+        const data: { podcast_id: string } = await res.json();
+        pollPodcastStatus(data.podcast_id);
+      } catch (err) {
+        setPodcastError((err as Error).message);
+      } finally {
+        setCreatingPodcast(false);
+      }
+    },
+    [creatingPodcast, pollPodcastStatus],
+  );
 
   const allFiles: TableFile[] = [
     ...uploadedFiles.map(f => ({
@@ -517,6 +600,18 @@ export default function Digitiser() {
                 }}
               >
                 Delete ({selectedFileIds.size})
+              </Button>
+              <Button
+                startIcon={<PodcastIcon />}
+                onClick={() =>
+                  createPodcast(
+                    selectedCompleted.map(f => f.file_id),
+                    `Podcast: ${selectedCompleted.length} documents`,
+                  )
+                }
+                disabled={selectedCompleted.length === 0 || creatingPodcast}
+              >
+                {creatingPodcast ? 'Creating podcast...' : `Create Podcast (${selectedCompleted.length})`}
               </Button>
               <Button
                 onClick={() => openChat(selectedCompleted.map(f => f.file_id), selectedCompleted.map(f => f.filename))}
@@ -638,6 +733,16 @@ export default function Digitiser() {
                           <>
                             <Button
                               size="small"
+                              variant="outlined"
+                              color="secondary"
+                              startIcon={<PodcastIcon />}
+                              onClick={() => createPodcast([file.file_id], `Podcast: ${file.filename}`)}
+                              disabled={creatingPodcast}
+                            >
+                              {creatingPodcast ? 'Creating...' : 'Podcast'}
+                            </Button>
+                            <Button
+                              size="small"
                               variant="contained"
                               startIcon={<DownloadIcon />}
                               onClick={() => downloadSinglePdf(file.file_id, file.filename)}
@@ -695,6 +800,45 @@ export default function Digitiser() {
             </Typography>
           )}
         </Stack>
+
+        {/* Podcast Panel */}
+        {currentPodcast && (
+          <Paper elevation={3} sx={{ p: 2 }}>
+            <Stack direction={{ xs: 'column', sm: 'row' }} spacing={2} alignItems="center">
+              <Stack spacing={0.5}>
+                <Typography variant="subtitle1">
+                  {currentPodcast.title}
+                </Typography>
+                <Typography variant="body2" color="text.secondary">
+                  Status: {currentPodcast.status}
+                  {currentPodcast.error_message && ` – ${currentPodcast.error_message}`}
+                </Typography>
+              </Stack>
+              <Box flexGrow={1} />
+              {currentPodcast.status === 'processing' && (
+                <Stack direction="row" spacing={1} alignItems="center">
+                  <CircularProgress size={20} />
+                  <Typography variant="body2">Generating podcast…</Typography>
+                </Stack>
+              )}
+              {currentPodcast.status === 'completed' && currentPodcast.audio_url && (
+                <audio
+                  controls
+                  src={`${API_BASE}${currentPodcast.audio_url}`}
+                  style={{ width: 280 }}
+                >
+                  Your browser does not support the audio element.
+                </audio>
+              )}
+            </Stack>
+          </Paper>
+        )}
+
+        {podcastError && (
+          <Alert severity="error" onClose={() => setPodcastError(null)}>
+            {podcastError}
+          </Alert>
+        )}
 
         {/* Chat Dialog */}
         <Dialog open={chatOpen} onClose={closeChat} maxWidth="md" fullWidth>
