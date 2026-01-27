@@ -35,6 +35,8 @@ import {
   AccordionDetails,
   Drawer,
   IconButton,
+  Tabs,
+  Tab,
 } from '@mui/material';
 import {
   Send as SendIcon,
@@ -55,6 +57,7 @@ import Highlight from 'react-highlight-words';
 const API_BASE = import.meta.env.VITE_DWANI_API_BASE_URL || 'https://discovery-server.dwani.ai';
 const API_KEY = import.meta.env.VITE_DWANI_API_KEY;
 const STORAGE_KEY = 'dwani_conversations';
+const NOTEBOOKS_STORAGE_KEY = 'dwani_notebooks';
 const GLOBAL_CHAT_ID = 'global-all-documents';
 
 interface UploadedFile {
@@ -104,6 +107,13 @@ interface Podcast {
   error_message?: string;
   created_at: string;
   updated_at: string;
+}
+
+interface Notebook {
+  id: string;
+  name: string;
+  fileIds: string[];
+  createdAt: number;
 }
 
 // ======================= Custom Hook: useDocumentManager =======================
@@ -445,6 +455,14 @@ export default function Digitiser() {
   const [creatingPodcast, setCreatingPodcast] = useState(false);
   const [podcastError, setPodcastError] = useState<string | null>(null);
 
+  const [notebooks, setNotebooks] = useState<Notebook[]>([]);
+  const [notebooksHydrated, setNotebooksHydrated] = useState(false);
+  const [notebookDialogOpen, setNotebookDialogOpen] = useState(false);
+  const [newNotebookName, setNewNotebookName] = useState('');
+  const [activeNotebookId, setActiveNotebookId] = useState<string | null>(null);
+  const [notebookWorkspaceOpen, setNotebookWorkspaceOpen] = useState(false);
+  const [notebookTab, setNotebookTab] = useState(0);
+
   // Deduplicated file list with proper type handling
   const serverFileMap = new Map<string, UploadedFile>();
   uploadedFiles.forEach(f => serverFileMap.set(f.file_id, f));
@@ -459,6 +477,30 @@ export default function Digitiser() {
     source: 'server' | 'local';
     error?: string;
   };
+
+  // Load / persist notebooks in localStorage
+  useEffect(() => {
+    try {
+      const raw = window.localStorage.getItem(NOTEBOOKS_STORAGE_KEY);
+      if (raw) {
+        const parsed: Notebook[] = JSON.parse(raw);
+        setNotebooks(parsed);
+      }
+    } catch {
+      // ignore malformed storage
+    } finally {
+      setNotebooksHydrated(true);
+    }
+  }, []);
+
+  useEffect(() => {
+    if (!notebooksHydrated) return;
+    try {
+      window.localStorage.setItem(NOTEBOOKS_STORAGE_KEY, JSON.stringify(notebooks));
+    } catch {
+      // ignore storage errors
+    }
+  }, [notebooks, notebooksHydrated]);
 
   const pollPodcastStatus = useCallback((podcastId: string) => {
     let isCancelled = false;
@@ -569,6 +611,41 @@ export default function Digitiser() {
     }
   };
 
+  const handleCreateNotebookConfirm = () => {
+    const fileIds = selectedCompleted.map(f => f.file_id);
+    if (!fileIds.length) {
+      setNotebookDialogOpen(false);
+      return;
+    }
+
+    const trimmedName = newNotebookName.trim();
+    const defaultName =
+      fileIds.length === 1
+        ? `Notebook – ${selectedCompleted[0].filename}`
+        : `Notebook – ${fileIds.length} documents`;
+
+    const name = trimmedName || defaultName;
+
+    const id =
+      (window.crypto && 'randomUUID' in window.crypto
+        ? window.crypto.randomUUID()
+        : `nb-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`);
+
+    const notebook: Notebook = {
+      id,
+      name,
+      fileIds,
+      createdAt: Date.now(),
+    };
+
+    setNotebooks(prev => [notebook, ...prev]);
+    setNotebookDialogOpen(false);
+  };
+
+  const activeNotebook = activeNotebookId
+    ? notebooks.find(nb => nb.id === activeNotebookId) || null
+    : null;
+
   return (
     <Box sx={{ minHeight: '100vh', bgcolor: 'background.default', p: { xs: 2, md: 4 } }}>
       <Stack spacing={4} sx={{ maxWidth: 1300, mx: 'auto' }}>
@@ -602,6 +679,15 @@ export default function Digitiser() {
                 Delete ({selectedFileIds.size})
               </Button>
               <Button
+                onClick={() => {
+                  setNewNotebookName('');
+                  setNotebookDialogOpen(true);
+                }}
+                disabled={selectedCompleted.length === 0}
+              >
+                Create Notebook
+              </Button>
+              <Button
                 startIcon={<PodcastIcon />}
                 onClick={() =>
                   createPodcast(
@@ -624,6 +710,41 @@ export default function Digitiser() {
             {selectedFileIds.size} document{selectedFileIds.size > 1 ? 's' : ''} selected
           </Alert>
         )}
+
+        {/* Notebooks Overview */}
+        <Paper elevation={1} sx={{ p: 2, mb: 2 }}>
+          <Typography variant="h6" gutterBottom>
+            Your Notebooks
+          </Typography>
+          {notebooks.length === 0 ? (
+            <Typography variant="body2" color="text.secondary">
+              No notebooks yet. Select one or more completed documents above and click{' '}
+              <strong>Create Notebook</strong> to get started.
+            </Typography>
+          ) : (
+            <Stack direction="row" spacing={1} flexWrap="wrap">
+              {notebooks.map(nb => {
+                const filesInNotebook = completedFiles.filter(f => nb.fileIds.includes(f.file_id));
+                const label = `${nb.name} • ${filesInNotebook.length} doc${filesInNotebook.length === 1 ? '' : 's'}`;
+                return (
+                  <Chip
+                    key={nb.id}
+                    label={label}
+                    onClick={() => {
+                      setActiveNotebookId(nb.id);
+                      setNotebookTab(0);
+                      setNotebookWorkspaceOpen(true);
+                    }}
+                    onDelete={() => {
+                      setNotebooks(prev => prev.filter(n => n.id !== nb.id));
+                    }}
+                    sx={{ mb: 1 }}
+                  />
+                );
+              })}
+            </Stack>
+          )}
+        </Paper>
 
         {/* Documents Header – with new "Search across all documents" button */}
         <Box display="flex" justifyContent="space-between" alignItems="center" mb={2}>
@@ -839,6 +960,173 @@ export default function Digitiser() {
             {podcastError}
           </Alert>
         )}
+
+        {/* Create Notebook Dialog */}
+        <Dialog open={notebookDialogOpen} onClose={() => setNotebookDialogOpen(false)}>
+          <DialogTitle>Create Notebook</DialogTitle>
+          <DialogContent>
+            <DialogContentText sx={{ mb: 2 }}>
+              Create a notebook from the currently selected documents. You can use this notebook as a
+              focused workspace for chat, summaries, and podcasts.
+            </DialogContentText>
+            <TextField
+              autoFocus
+              fullWidth
+              margin="dense"
+              label="Notebook name"
+              value={newNotebookName}
+              onChange={e => setNewNotebookName(e.target.value)}
+              placeholder={
+                selectedCompleted.length === 1
+                  ? `Notebook – ${selectedCompleted[0].filename}`
+                  : `Notebook – ${selectedCompleted.length} documents`
+              }
+            />
+            <Typography variant="subtitle2" sx={{ mt: 2, mb: 0.5 }}>
+              Included documents
+            </Typography>
+            {selectedCompleted.length === 0 ? (
+              <Typography variant="body2" color="text.secondary">
+                No completed documents selected.
+              </Typography>
+            ) : (
+              <List dense>
+                {selectedCompleted.map(file => (
+                  <ListItem key={file.file_id}>
+                    <ListItemText
+                      primary={file.filename}
+                      secondary={formatDate(file.created_at)}
+                    />
+                  </ListItem>
+                ))}
+              </List>
+            )}
+          </DialogContent>
+          <DialogActions>
+            <Button onClick={() => setNotebookDialogOpen(false)}>Cancel</Button>
+            <Button
+              variant="contained"
+              onClick={handleCreateNotebookConfirm}
+              disabled={selectedCompleted.length === 0}
+            >
+              Create
+            </Button>
+          </DialogActions>
+        </Dialog>
+
+        {/* Notebook Workspace Dialog */}
+        <Dialog
+          open={notebookWorkspaceOpen && Boolean(activeNotebook)}
+          onClose={() => setNotebookWorkspaceOpen(false)}
+          maxWidth="md"
+          fullWidth
+        >
+          {activeNotebook && (
+            <>
+              <DialogTitle>{activeNotebook.name}</DialogTitle>
+              <DialogContent dividers>
+                <Tabs
+                  value={notebookTab}
+                  onChange={(_, val) => setNotebookTab(val)}
+                  sx={{ mb: 2 }}
+                >
+                  <Tab label="Sources" />
+                  <Tab label="Chat" />
+                  <Tab label="Podcast" />
+                  <Tab label="Summaries" />
+                </Tabs>
+
+                {notebookTab === 0 && (
+                  <Box>
+                    <Typography variant="subtitle2" gutterBottom>
+                      Sources in this notebook
+                    </Typography>
+                    <List dense>
+                      {completedFiles
+                        .filter(f => activeNotebook.fileIds.includes(f.file_id))
+                        .map(file => (
+                          <ListItem key={file.file_id}>
+                            <ListItemText
+                              primary={file.filename}
+                              secondary={formatDate(file.created_at)}
+                            />
+                          </ListItem>
+                        ))}
+                    </List>
+                  </Box>
+                )}
+
+                {notebookTab === 1 && (
+                  <Box>
+                    <Typography variant="body2" sx={{ mb: 2 }}>
+                      Open a focused chat scoped to this notebook’s documents.
+                    </Typography>
+                    <Button
+                      variant="contained"
+                      onClick={() => {
+                        const filesInNotebook = completedFiles.filter(f =>
+                          activeNotebook.fileIds.includes(f.file_id),
+                        );
+                        openChat(
+                          filesInNotebook.map(f => f.file_id),
+                          filesInNotebook.map(f => f.filename),
+                        );
+                        setNotebookWorkspaceOpen(false);
+                      }}
+                      disabled={
+                        completedFiles.filter(f => activeNotebook.fileIds.includes(f.file_id)).length === 0
+                      }
+                    >
+                      Open Chat for this Notebook
+                    </Button>
+                  </Box>
+                )}
+
+                {notebookTab === 2 && (
+                  <Box>
+                    <Typography variant="body2" sx={{ mb: 2 }}>
+                      Generate or play a podcast episode for this notebook’s documents.
+                    </Typography>
+                    <Button
+                      variant="contained"
+                      startIcon={<PodcastIcon />}
+                      onClick={() => {
+                        const filesInNotebook = completedFiles.filter(f =>
+                          activeNotebook.fileIds.includes(f.file_id),
+                        );
+                        if (!filesInNotebook.length) return;
+                        createPodcast(
+                          filesInNotebook.map(f => f.file_id),
+                          `Podcast: ${activeNotebook.name}`,
+                        );
+                        // keep dialog open so user can switch to Podcast panel below
+                      }}
+                      disabled={creatingPodcast}
+                    >
+                      {creatingPodcast ? 'Creating podcast...' : 'Create / Reuse Podcast'}
+                    </Button>
+                    <Typography variant="caption" display="block" sx={{ mt: 1 }} color="text.secondary">
+                      The player appears in the main view once the podcast is ready.
+                    </Typography>
+                  </Box>
+                )}
+
+                {notebookTab === 3 && (
+                  <Box>
+                    <Typography variant="body2" color="text.secondary">
+                      Summaries and study guides for this notebook will appear here. For now, you can
+                      ask the chat to generate summaries, outlines, and FAQs using this notebook’s
+                      documents.
+                    </Typography>
+                  </Box>
+                )}
+              </DialogContent>
+              <DialogActions>
+                <Button onClick={() => setNotebookWorkspaceOpen(false)}>Close</Button>
+              </DialogActions>
+            </>
+          )}
+        </Dialog>
 
         {/* Chat Dialog */}
         <Dialog open={chatOpen} onClose={closeChat} maxWidth="md" fullWidth>
