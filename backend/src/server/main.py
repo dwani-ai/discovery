@@ -55,6 +55,9 @@ logging.config.dictConfig({
 logger = logging.getLogger("dwani_server")
 
 DWANI_API_BASE_URL = os.getenv("DWANI_API_BASE_URL")
+
+DWANI_API_BASE_URL_LLM = os.getenv("DWANI_API_BASE_URL_LLM")
+
 if not DWANI_API_BASE_URL:
     raise RuntimeError("DWANI_API_BASE_URL environment variable is required.")
 
@@ -393,7 +396,7 @@ def get_openai_client(model: str = "gemma3") -> AsyncOpenAI:
     if model not in valid_models:
         raise ValueError(f"Invalid model: {model}")
     
-    return AsyncOpenAI(api_key="http", base_url="https://qwen.dwani.ai/v1")
+    return AsyncOpenAI(api_key="http", base_url=DWANI_API_BASE_URL_LLM)
 
 
 # ========================= SERVICES =========================
