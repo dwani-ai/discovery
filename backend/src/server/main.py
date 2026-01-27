@@ -740,11 +740,36 @@ async def create_podcast(
         if r.status != FileStatus.COMPLETED:
             raise HTTPException(status_code=400, detail=f"File {r.filename} not processed")
 
+    # If a podcast for the same set of documents already exists (or is in progress),
+    # return that instead of creating a new one.
+    requested_ids_set = set(request.file_ids)
+    existing_podcasts = db.query(PodcastRecord).filter(
+        PodcastRecord.status != PodcastStatus.FAILED
+    ).all()
+
+    for p in existing_podcasts:
+        try:
+            stored_ids = json.loads(p.file_ids) if p.file_ids else []
+        except Exception:
+            continue
+        if set(stored_ids) == requested_ids_set:
+            # Reuse existing podcast
+            message = (
+                "Podcast already generated."
+                if p.status == PodcastStatus.COMPLETED
+                else "Podcast generation already in progress."
+            )
+            return PodcastCreateResponse(
+                podcast_id=p.id,
+                status=p.status,
+                message=message,
+            )
+
     podcast_id = str(uuid.uuid4())
     podcast = PodcastRecord(
         id=podcast_id,
         title=request.title or "AI Podcast",
-        file_ids=json.dumps(request.file_ids),
+        file_ids=json.dumps(sorted(request.file_ids)),
         status=PodcastStatus.PENDING,
     )
     db.add(podcast)
