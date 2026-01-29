@@ -1,162 +1,120 @@
-Discovery - Agentic Intelligence Platform on GCP
-================================================
-Try Demo: https://app.dwani.ai
 
-## Overview
-Agentic PDF assistant: Upload → OCR/digitize → RAG chat → Clean PDF export.
-Fully managed on GCP: Vertex AI (models/embeddings), Vector Search (RAG), Cloud Run (API/UI).
+### Core Replacements
 
+| Original Component | GCP/Vertex AI Replacement |
+|--------------------|---------------------------|
+| **ChromaDB + bge-small embeddings** | Vertex AI Text Embeddings (text-embedding-004) + ChunkRecord table in AlloyDB/Cloud SQL |
+| **pdf2image + OpenAI vision OCR** | Gemini 1.5 Flash multimodal (native PDF ingestion) |
+| **AsyncOpenAI chat (gemma3 proxy)** | Gemini 1.5 Pro via Vertex AI SDK |
+| **dwani Audio API (custom TTS)** | Google Cloud Text-to-Speech |
+| **SQLite** | Cloud SQL PostgreSQL with Cloud SQL Connector |
+| **Local file storage** | Cloud Storage (GCS) buckets |
+| **fpdf regeneration** | Gemini text extraction (clean PDFs now via GCS signed URLs) |
 
-| Local Component                          | GCP Replacement                                    | Migration Rationale                                                                            |
-| ---------------------------------------- | -------------------------------------------------- | ---------------------------------------------------------------------------------------------- |
-| FastAPI server (uvicorn)                 | Cloud Run or Vertex AI custom prediction endpoints | Serverless scaling, autoscaling to zero; deploy Docker image directly. colab.research.google+1 |
-| ChromaDB (local vector store)            | Vertex AI Vector Search                            | Managed vector DB with hybrid search (semantic + BM25), ACLs, autoscaling. github+1            |
-| VLLM/llama.cpp (Gemma3-Vision text-only) | Vertex AI endpoints (Gemma 3 or Qwen VL models)    | GPU‑optimized serving, multi‑model (embeddings + vision + LLM), no local infra. cloud.google+1 |
-| SQLite (full text storage)               | Cloud SQL (PostgreSQL) or Firestore                | Managed DB with backups, scaling; pgvector extension if needed. github​                        |
-| Frontend (React?)                        | Cloud Run or App Engine                            | Static hosting via Cloud Storage + CDN, or full app on Run. github​                            |
-| pdf2image, fpdf (PDF handling)           | Document AI + Cloud Storage                        | Native OCR/parsing, chunking, clean PDF gen. github​                                           |
+### Key Features Preserved
 
+✅ **Hybrid RAG**: Semantic search (Vertex embeddings + cosine similarity) + BM25 lexical, fused with RRF  
+✅ **Multi-document chat**: Cross-file contradiction detection with Gemini  
+✅ **NotebookLM-style podcasts**: Gemini script generation → Google TTS → GCS audio storage  
+✅ **Page-aware chunking**: Maintains page metadata for citation  
+✅ **Background processing**: FastAPI BackgroundTasks (Cloud Tasks-ready architecture)
 
-----
-----
+## Required Environment Variables
 
-
-
-```
-
-
-## GCP Architecture
-┌─────────────────────────────────────────────────────────────────────────────┐
-│                          CLIENT (Cloud Storage/CDN)                         │
-│   • Upload PDF  • Chat w/ docs  • Download clean PDF                        │
-└─────────────────────────────────────────────────────────────────────────────┘
-         │ HTTP/HTTPS
-         ▼
-┌───────────────────────────────┐
-│     Cloud Run (FastAPI)       │  ← Deploy: gcloud run deploy discovery-api
-└───────────────┬───────────────┘
-                │
-┌───────────────┼───────────────┐
-│               │               │
-▼               ▼               ▼
-Cloud Storage   │   Vertex AI   │  /files/{id}/pdf
-(PDF landing)   │   Endpoints   │  (Document AI)
-    │           │ (Gemma VL/    │
-    ▼           │  Text+Embed)  │
-Eventarc ───────┼───────────────┘
-    │           │
-    ▼           ▼
-Document AI     │
-(OCR/Parse) ────┼──> Vertex AI Embeddings
-    │           │
-    ▼           ▼
-BigQuery/       │
-Cloud SQL       │
-(metadata) ────┼──> Vertex AI Vector Search (hybrid BM25+semantic)
-                │
-                ▼
-             RAG Query (/chat) → RRF fusion → Grounded response + citations
-```
-
-
----
----
-
-| Subsystem     | Products                                                          | Purpose                                                        |
-| ------------- | ----------------------------------------------------------------- | -------------------------------------------------------------- |
-| Ingestion     | Cloud Storage, Pub/Sub, Cloud Run functions, Vertex AI Embeddings | Land, trigger, parse/chunk/embed/index documents. reddit+1     |
-| Retrieval     | Vertex AI Vector Search or Vertex AI Search                       | Semantic search with ACL filtering, autoscaling. reddit+1      |
-| Generation    | Vertex AI (Gemini models), Prompt Optimizer                       | Grounded generation, safety filters, prompt tuning. reddit+1   |
-| App Layer     | Cloud Run (frontend/backend), IAM/VPC Service Controls            | Secure serving, SSO integration, regional deployment. reddit+1 |
-| Observability | Cloud Logging, Cloud Monitoring, BigQuery                         | Query logs, eval metrics, A/B testing. reddit​                 |
-
-## Setup on GCP
-
-### Prerequisites
-- GCP project with Vertex AI API, Cloud Run, Storage enabled.
-- Service account with roles: Vertex AI User, Storage Admin, Cloud Run Developer.
-- Install: `gcloud`, Terraform, Google Cloud SDK.  [github](https://github.com/dwani-ai/discovery)
-
-### 1. Deploy Infrastructure (Terraform)
 ```bash
-terraform init
-terraform apply
-# Creates: GCS bucket, Pub/Sub, Vector Search index, IAM
+# GCP Core
+GOOGLE_CLOUD_PROJECT=your-project-id
+GCP_LOCATION=europe-west4  # Frankfurt
+
+# Cloud SQL / AlloyDB
+DB_USER=postgres
+DB_PASSWORD=your-password
+DB_NAME=files_db
+INSTANCE_CONNECTION_NAME=project:region:instance
+
+# GCS Buckets
+GCS_BUCKET_PDFS=dwani-pdfs
+GCS_BUCKET_CLEAN=dwani-clean-pdfs
+GCS_BUCKET_AUDIO=dwani-audio
+
+# Optional: Cloud Tasks (for production background jobs)
+CLOUD_TASKS_QUEUE=projects/PROJECT/locations/LOCATION/queues/dwani-tasks
+CLOUD_RUN_SERVICE_URL=https://your-service-run.app
+
+# Token limits (unchanged)
+MAX_CONTEXT_TOKENS=12000
+MAX_HISTORY_TOKENS=3000
 ```
 
-### 2. Deploy Models (Vertex AI)
-```bash
-# Embeddings & LLM (Gemma 3 or equiv)
-gcloud ai models upload \
-  --region=us-central1 \
-  --display-name=discovery-embeddings \
-  --container-ports=8080 \
-  --machine-type=n1-standard-4 \
-  --accelerator=type=t4, count=1 \
-  gs://your-models/text-embedding-004
-```
-Deploy Vision/OCR model similarly.  [cloud.google](https://cloud.google.com/vertex-ai/generative-ai/docs/open-models/vllm/use-vllm)
+## Updated `requirements.txt`
 
-### 3. Deploy API/UI (Cloud Run)
+```
+fastapi[all]==0.109.0
+uvicorn[standard]==0.27.0
+google-cloud-aiplatform>=1.52.0
+google-cloud-storage>=2.16.0
+google-cloud-sql-connector[asyncpg]>=1.9.0
+google-cloud-texttospeech>=2.16.0
+google-cloud-tasks>=2.16.0
+pg8000>=1.30.0
+psycopg2-binary>=2.9.9
+sqlalchemy>=2.0.25
+rank-bm25>=0.2.2
+pydantic>=2.6.0
+python-multipart>=0.0.9
+numpy>=1.26.0
+```
+
+## Deployment Quick Start
+
+### 1. **Local Development** (with Cloud SQL proxy)
 ```bash
-# Build & deploy FastAPI (update code for Vertex SDK)
-gcloud builds submit --tag gcr.io/PROJECT/discovery-api
-gcloud run deploy discovery-api \
-  --image gcr.io/PROJECT/discovery-api \
-  --region us-central1 \
+# Start Cloud SQL proxy
+cloud-sql-proxy project:region:instance &
+
+# Set env vars
+export GOOGLE_CLOUD_PROJECT=your-project
+export INSTANCE_CONNECTION_NAME=project:region:instance
+# ... other vars
+
+# Run locally
+python main_gcp_vertex.py
+```
+
+### 2. **Cloud Run Deployment**
+
+Create `Dockerfile`:
+```dockerfile
+FROM python:3.12-slim
+
+WORKDIR /app
+COPY requirements.txt .
+RUN pip install --no-cache-dir -r requirements.txt
+
+COPY main_gcp_vertex.py main.py
+COPY . .
+
+CMD ["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8080"]
+```
+
+Deploy:
+```bash
+gcloud run deploy dwani-api \
+  --source . \
+  --region europe-west4 \
   --allow-unauthenticated \
-  --set-env-vars "VECTOR_SEARCH_ENDPOINT=projects/.../locations/.../indexes/..." \
-                 "VERTEX_PROJECT=your-project" \
-                 "VERTEX_REGION=us-central1"
-```
-Frontend: Static to Cloud Storage or same Run service.  [colab.research.google](https://colab.research.google.com/github/GoogleCloudPlatform/vertex-ai-samples/blob/main/notebooks/official/custom/SDK_Custom_Container_Prediction.ipynb)
-
-### 4. Migrate Local Config
-```
-export VERTEX_PROJECT=your-project
-export VERTEX_REGION=us-central1
-export MAX_CONTEXT_TOKENS=32768
-export MAX_HISTORY_TOKENS=4096
-export VECTOR_SEARCH_PROJECT_ID=your-project  # For hybrid search
+  --set-env-vars GOOGLE_CLOUD_PROJECT=$PROJECT_ID,GCP_LOCATION=europe-west4 \
+  --set-secrets DB_PASSWORD=db-password:latest \
+  --memory 2Gi \
+  --timeout 300
 ```
 
-### 5. Test
-```
-curl -X POST https://discovery-api-XXXX.run.app/files \
-  -F "file=@sample.pdf"
-curl -X POST https://discovery-api-XXXX.run.app/chat-with-document \
-  -d '{"file_id": "abc", "query": "Summarize page 3"}'
-```
+## Production Enhancements (Next Steps)
 
-## Features (GCP‑Enhanced)
-- Source audit & delete: Via Storage lifecycle + IAM.
-- PDF regenerate: Document AI output to Storage.
-- Multi‑doc chat: Vector Search across files.
-- Page citations: Metadata filtering.
-- Contradictions: Vertex grounding scores.  [github](https://github.com/dwani-ai/discovery)
+For your **Google CE interview demo**, consider these upgrades to show production readiness:
 
-## Code Changes Needed
-- Replace Chroma → `google.cloud.aiplatform.MatchingEngineIndexEndpoint`
-- VLLM → `vertexai.generative_models.GenerativeModel`
-- SQLite → `google.cloud.sql` or BigQuery SDK.
-- BackgroundTasks → Cloud Run jobs/Eventarc.
-
-## Costs & Scaling
-- Vertex: $0.0001/1k chars (LLM), $0.00002/query (Vector).
-- Cloud Run: Pay‑per‑request, autoscales to 1k+.
-
-Fork repo, apply Terraform, deploy in <30min. Full migration aligns with GCP RAG blueprints.  [github](https://github.com/dwani-ai/discovery)
-
-Discovery now runs natively on Google Cloud Platform (GCP) with Vertex AI for RAG/LLM, Vector Search for hybrid retrieval, and Cloud Run for serverless APIs—ideal for enterprise scale.  [github](https://github.com/dwani-ai/discovery)
-++
-
-# 1. Build & Deploy to Cloud Run
-gcloud builds submit --tag gcr.io/$PROJECT_ID/discovery-api
-gcloud run deploy discovery-api \
-  --image gcr.io/$PROJECT_ID/discovery-api \
-  --region us-central1 \
-  --set-env-vars GCP_PROJECT_ID=$PROJECT_ID,GCS_BUCKET_NAME=your-bucket,VECTOR_SEARCH_ENDPOINT_ID=projects/... \
-  --add-cloudsql-instances your-project:us-central1:discovery-db
-
-# 2. Test
-curl -X POST https://discovery-api-XXXX.run.app/files/upload -F "file=@test.pdf"
+1. **Vertex AI Vector Search Index**: Replace in-memory cosine similarity with managed index
+2. **Cloud Tasks**: Move background jobs (`background_extraction_task`, `background_podcast_task`) to queue-triggered Cloud Run jobs
+3. **IAM & signed URLs**: Add proper authentication, use GCS signed URLs for file downloads
+4. **Monitoring**: Cloud Logging + Cloud Trace instrumentation
+5. **Cost optimization**: Batch embeddings, cache frequent queries, use Spot instances for Cloud Run jobs
