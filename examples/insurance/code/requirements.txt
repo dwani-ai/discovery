@@ -1,7 +1,0 @@
-google-adk 
-litellm 
-httpx 
-pydantic[dotenv]
-fastapi 
-uvicorn 
-requests
