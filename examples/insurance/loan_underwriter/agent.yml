@@ -1,62 +1,43 @@
 # agent.yaml
-name: loan-underwriting
-description: "Multi-agent loan underwriting system"
-
-model:
+name: loan-underwriter
+model: 
   provider: litellm
   model: qwen3-coder
-  api_base: "http://localhost:8000/v1"  # Your Dwani endpoint
+  api_base: "http://localhost:8000/v1"  # Dwani
 
-agents:
-  - name: loan_orchestrator
-    type: llm
-    model: qwen3-coder
-    instruction: |
-      CRITICAL WORKFLOW:
-      1. run_data_ingestion_agent → external data
-      2. run_risk_policy_agent → risk + policy  
-      3. run_report_agent → RiskReport JSON
-      
-      Input: {"application": LoanApplication}
-      Output: RiskReport JSON
-    tools:
-      - run_data_ingestion_agent
-      - run_risk_policy_agent
-      - run_report_agent
+root_agent:
+  name: orchestrator
+  instruction: |
+    Process loan applications:
+    1. data_ingestion → fetch APIs  
+    2. risk_policy → score + policy
+    3. report → RiskReport JSON
+  tools:
+    - data_ingestion
+    - risk_policy  
+    - report
 
-  - name: data_ingestion_agent
-    type: llm
-    instruction: |
-      Call ALL 4 tools in parallel:
-      - fetch_credit_bureau
-      - fetch_employment_verification
-      - fetch_fraud_signals 
-      - fetch_bank_statement_analysis
-    tools:
-      - fetch_credit_bureau
-      - fetch_employment_verification
-      - fetch_fraud_signals
-      - fetch_bank_statement_analysis
+data_ingestion:
+  name: data_agent
+  instruction: "Fetch credit, employment, fraud, bank data."
+  tools:
+    - fetch_credit_bureau
+    - fetch_employment_verification
+    - fetch_fraud_signals
+    - fetch_bank_statement_analysis
 
-  - name: risk_policy_agent
-    type: llm  
-    instruction: |
-      1. call_risk_model
-      2. evaluate_policy
-      Return: {"risk_score": ..., "policy_decision": ...}
-    tools:
-      - call_risk_model
-      - evaluate_policy
+risk_policy:
+  name: risk_agent
+  instruction: "Compute risk score + policy decision."
+  tools:
+    - call_risk_model
+    - evaluate_policy
 
-  - name: report_agent
-    type: llm
-    instruction: |
-      Call build_risk_report → return RiskReport JSON exactly
-    tools:
-      - build_risk_report
+report:
+  name: report_agent
+  instruction: "Generate RiskReport JSON."
+  tools:
+    - build_risk_report
 
 tools:
-  # All your Python tool functions auto-discovered
   module: src.tools
-
-entrypoint: loan_orchestrator

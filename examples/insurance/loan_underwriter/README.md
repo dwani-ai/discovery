@@ -43,3 +43,22 @@ sqlite3 audit.db "SELECT * FROM audit_logs ORDER BY timestamp DESC LIMIT 5;"
 # 4. Check human queue (if manual_review case)
 cat human_review_queue.jsonl
 
+---
+
+---
+
+# 1. Install ADK CLI globally
+pip install google-adk[cli]
+
+# 2. Run your multi-agent system
+adk run agent.yaml --port 8080
+
+# 3. Test
+curl -X POST http://localhost:8080/chat \
+  -H "Content-Type: application/json" \
+  -d '{
+    "messages": [{
+      "role": "user", 
+      "content": "{\"application\":{\"application_id\":\"adk-test\",\"customer_id\":\"adk-001\",\"name\":\"ADK User\",\"ssn_last4\":\"5555\",\"income\":85000,\"employer\":\"ADK Corp\",\"loan_amount\":25000,\"purpose\":\"ADK test\"}}"
+    }]
+  }' | jq .
