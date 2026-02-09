@@ -10,3 +10,18 @@ LITELLM_API_BASE="http://localhost:8000/v1"
 LITELLM_API_KEY="sk-dummy"
 
 --
+- For Terminal 
+adk run loan_agent
+
+
+- For Web Browser
+adk web --port 8000
+
+
+--
+
+REference
+
+https://google.github.io/adk-docs/get-started/quickstart/#run-your-agent
+
+    
