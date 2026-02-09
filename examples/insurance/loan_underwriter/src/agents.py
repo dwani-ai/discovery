@@ -31,6 +31,7 @@ MODEL_NAME = os.environ.get("DWANI_MODEL_NAME", "qwen3-coder")
 MODEL = LiteLlm(
     model=MODEL_NAME,
     api_base=API_BASE_URL,
+    provider="openai"
 )
 
 # -----------------------------------------------------------------------------
