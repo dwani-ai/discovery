@@ -3,7 +3,7 @@ Loan Underwriter
 python3.10 -m venv venv
 source venv/bin/activate
 
-pip install google-adk pydantic fastapi uvicorn requests python-dotenv
+pip install google-adk pydantic fastapi uvicorn requests python-dotenv litellm
 
 
 cat > .env << 'EOF'

@@ -7,6 +7,19 @@ from .models import (
     FraudSignals, BankAnalysis, RiskScore
 )
 
+
+# Add this at the TOP of src/tools.py (after imports)
+SAMPLE_APP = {
+    "application_id": "test-001",
+    "customer_id": "test-cust-001",
+    "name": "John Doe",
+    "ssn_last4": "1234",
+    "income": 85000.0,
+    "employer": "Tech Corp",
+    "loan_amount": 25000.0,
+    "purpose": "Home improvement",
+}
+
 load_dotenv()
 
 # Global rate limiter (token bucket for credit bureau: 100/min)
