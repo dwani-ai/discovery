@@ -1,0 +1,185 @@
+<mxfile host="app.diagrams.net" agent="Mozilla/5.0 (X11; Ubuntu; Linux x86_64; rv:147.0) Gecko/20100101 Firefox/147.0" version="29.3.8">
+  <diagram name="Loan Decisioning Architecture" id="YApPyq2fZdPhM8Ofla9G">
+    <mxGraphModel dx="1356" dy="800" grid="1" gridSize="10" guides="1" tooltips="1" connect="1" arrows="1" fold="1" page="1" pageScale="1" pageWidth="850" pageHeight="1100" math="0" shadow="0">
+      <root>
+        <mxCell id="0" />
+        <mxCell id="1" parent="0" />
+        <mxCell id="EXUIBqwDPfPqHuMSUPsM-36" parent="1" style="swimlane;childLayout=stackLayout;horizontal=1;startSize=24;horizontalStack=0;resizeParent=1;collapsible=0;fontStyle=1;rounded=1;strokeColor=#111827;fillColor=#e5e7eb;" value="Channels &amp; LOS" vertex="1">
+          <mxGeometry height="260" width="360" x="30" y="200" as="geometry" />
+        </mxCell>
+        <mxCell id="EXUIBqwDPfPqHuMSUPsM-37" parent="EXUIBqwDPfPqHuMSUPsM-36" style="rounded=1;fillColor=#bfdbfe;strokeColor=#1d4ed8;fontColor=#111827;whiteSpace=wrap;html=1;" value="Web / Mobile App" vertex="1">
+          <mxGeometry height="60" width="360" y="24" as="geometry" />
+        </mxCell>
+        <mxCell id="EXUIBqwDPfPqHuMSUPsM-38" parent="EXUIBqwDPfPqHuMSUPsM-36" style="rounded=1;fillColor=#bfdbfe;strokeColor=#1d4ed8;fontColor=#111827;whiteSpace=wrap;html=1;" value="Call Center / Branch UI" vertex="1">
+          <mxGeometry height="60" width="360" y="84" as="geometry" />
+        </mxCell>
+        <mxCell id="EXUIBqwDPfPqHuMSUPsM-39" parent="EXUIBqwDPfPqHuMSUPsM-36" style="rounded=1;fillColor=#93c5fd;strokeColor=#1d4ed8;fontColor=#111827;whiteSpace=wrap;html=1;fontStyle=1;" value="Loan Origination System (LOS)" vertex="1">
+          <mxGeometry height="60" width="360" y="144" as="geometry" />
+        </mxCell>
+        <mxCell id="EXUIBqwDPfPqHuMSUPsM-40" parent="1" style="swimlane;startSize=26;horizontal=1;childLayout=stackLayout;resizeParent=0;collapsible=0;fontStyle=1;rounded=1;strokeColor=#111827;fillColor=#e5e7eb;" value="ADK Loan Decisioning Service" vertex="1">
+          <mxGeometry height="520" width="740" x="440" y="180" as="geometry" />
+        </mxCell>
+        <mxCell id="EXUIBqwDPfPqHuMSUPsM-41" parent="EXUIBqwDPfPqHuMSUPsM-40" style="swimlane;startSize=22;horizontal=1;childLayout=stackLayout;collapsible=0;fontStyle=1;rounded=1;strokeColor=#111827;fillColor=#d1d5db;" value="API Layer" vertex="1">
+          <mxGeometry height="494" width="1380" y="26" as="geometry" />
+        </mxCell>
+        <mxCell id="EXUIBqwDPfPqHuMSUPsM-42" parent="EXUIBqwDPfPqHuMSUPsM-41" style="rounded=1;fillColor=#fee2e2;strokeColor=#b91c1c;fontColor=#111827;whiteSpace=wrap;html=1;" value="Loan Decisioning API (REST / gRPC)" vertex="1">
+          <mxGeometry height="472" width="690" y="22" as="geometry" />
+        </mxCell>
+        <mxCell id="EXUIBqwDPfPqHuMSUPsM-43" parent="EXUIBqwDPfPqHuMSUPsM-41" style="rounded=1;fillColor=#fee2e2;strokeColor=#b91c1c;fontColor=#111827;whiteSpace=wrap;html=1;" value="AuthN/AuthZ (OAuth2, JWT, mTLS, Request Validation)" vertex="1">
+          <mxGeometry height="472" width="690" x="690" y="22" as="geometry" />
+        </mxCell>
+        <mxCell id="EXUIBqwDPfPqHuMSUPsM-44" parent="EXUIBqwDPfPqHuMSUPsM-40" style="swimlane;startSize=22;horizontal=1;childLayout=stackLayout;collapsible=0;fontStyle=1;rounded=1;strokeColor=#111827;fillColor=#d1d5db;" value="ADK Runtime (Multi-Agent System)" vertex="1">
+          <mxGeometry height="494" width="1950" x="1380" y="26" as="geometry" />
+        </mxCell>
+        <mxCell id="EXUIBqwDPfPqHuMSUPsM-45" parent="EXUIBqwDPfPqHuMSUPsM-44" style="rounded=1;fillColor=#ddd6fe;strokeColor=#4c1d95;fontColor=#111827;whiteSpace=wrap;html=1;fontStyle=1;" value="OrchestratorAgent" vertex="1">
+          <mxGeometry height="472" width="690" y="22" as="geometry" />
+        </mxCell>
+        <mxCell id="EXUIBqwDPfPqHuMSUPsM-46" parent="EXUIBqwDPfPqHuMSUPsM-44" style="swimlane;startSize=18;horizontal=1;childLayout=stackLayout;collapsible=0;rounded=1;strokeColor=#4c1d95;fillColor=#ede9fe;fontStyle=1;" value="Sub-Agents" vertex="1">
+          <mxGeometry height="472" width="1260" x="690" y="22" as="geometry" />
+        </mxCell>
+        <mxCell id="EXUIBqwDPfPqHuMSUPsM-47" parent="EXUIBqwDPfPqHuMSUPsM-46" style="rounded=1;fillColor=#e0f2fe;strokeColor=#0369a1;fontColor=#111827;whiteSpace=wrap;html=1;" value="DataCollectionAgent" vertex="1">
+          <mxGeometry height="454" width="210" y="18" as="geometry" />
+        </mxCell>
+        <mxCell id="EXUIBqwDPfPqHuMSUPsM-48" parent="EXUIBqwDPfPqHuMSUPsM-46" style="rounded=1;fillColor=#e0f2fe;strokeColor=#0369a1;fontColor=#111827;whiteSpace=wrap;html=1;" value="CreditAndFraudAgent" vertex="1">
+          <mxGeometry height="454" width="210" x="210" y="18" as="geometry" />
+        </mxCell>
+        <mxCell id="EXUIBqwDPfPqHuMSUPsM-49" parent="EXUIBqwDPfPqHuMSUPsM-46" style="rounded=1;fillColor=#e0f2fe;strokeColor=#0369a1;fontColor=#111827;whiteSpace=wrap;html=1;" value="PolicyReasoningAgent" vertex="1">
+          <mxGeometry height="454" width="210" x="420" y="18" as="geometry" />
+        </mxCell>
+        <mxCell id="EXUIBqwDPfPqHuMSUPsM-50" parent="EXUIBqwDPfPqHuMSUPsM-46" style="rounded=1;fillColor=#e0f2fe;strokeColor=#0369a1;fontColor=#111827;whiteSpace=wrap;html=1;" value="RiskScoringAgent" vertex="1">
+          <mxGeometry height="454" width="210" x="630" y="18" as="geometry" />
+        </mxCell>
+        <mxCell id="EXUIBqwDPfPqHuMSUPsM-51" parent="EXUIBqwDPfPqHuMSUPsM-46" style="rounded=1;fillColor=#e0f2fe;strokeColor=#0369a1;fontColor=#111827;whiteSpace=wrap;html=1;" value="DecisionAndReportingAgent" vertex="1">
+          <mxGeometry height="454" width="210" x="840" y="18" as="geometry" />
+        </mxCell>
+        <mxCell id="EXUIBqwDPfPqHuMSUPsM-52" parent="EXUIBqwDPfPqHuMSUPsM-46" style="rounded=1;fillColor=#e0f2fe;strokeColor=#0369a1;fontColor=#111827;whiteSpace=wrap;html=1;" value="EscalationAgent (Human-in-the-loop)" vertex="1">
+          <mxGeometry height="454" width="210" x="1050" y="18" as="geometry" />
+        </mxCell>
+        <mxCell id="EXUIBqwDPfPqHuMSUPsM-53" parent="EXUIBqwDPfPqHuMSUPsM-40" style="swimlane;startSize=22;horizontal=1;childLayout=stackLayout;collapsible=0;fontStyle=1;rounded=1;strokeColor=#111827;fillColor=#d1d5db;" value="Session &amp; State" vertex="1">
+          <mxGeometry height="494" width="640" x="3330" y="26" as="geometry" />
+        </mxCell>
+        <mxCell id="EXUIBqwDPfPqHuMSUPsM-54" parent="EXUIBqwDPfPqHuMSUPsM-53" style="rounded=1;fillColor=#fef9c3;strokeColor=#a16207;fontColor=#111827;whiteSpace=wrap;html=1;" value="SessionService (DB-backed, non-PII metadata)" vertex="1">
+          <mxGeometry height="472" width="320" y="22" as="geometry" />
+        </mxCell>
+        <mxCell id="EXUIBqwDPfPqHuMSUPsM-55" parent="EXUIBqwDPfPqHuMSUPsM-53" style="rounded=1;fillColor=#fef9c3;strokeColor=#a16207;fontColor=#111827;whiteSpace=wrap;html=1;" value="Per-application state (tokens + derived features, ephemeral)" vertex="1">
+          <mxGeometry height="472" width="320" x="320" y="22" as="geometry" />
+        </mxCell>
+        <mxCell id="EXUIBqwDPfPqHuMSUPsM-56" parent="EXUIBqwDPfPqHuMSUPsM-40" style="swimlane;startSize=22;horizontal=1;childLayout=stackLayout;collapsible=0;fontStyle=1;rounded=1;strokeColor=#111827;fillColor=#d1d5db;" value="Tools Layer (within ADK Service)" vertex="1">
+          <mxGeometry height="494" width="1280" x="3970" y="26" as="geometry" />
+        </mxCell>
+        <mxCell id="EXUIBqwDPfPqHuMSUPsM-57" parent="EXUIBqwDPfPqHuMSUPsM-56" style="rounded=1;fillColor=#dcfce7;strokeColor=#15803d;fontColor=#111827;whiteSpace=wrap;html=1;" value="Audit Logging Tool" vertex="1">
+          <mxGeometry height="472" width="320" y="22" as="geometry" />
+        </mxCell>
+        <mxCell id="EXUIBqwDPfPqHuMSUPsM-58" parent="EXUIBqwDPfPqHuMSUPsM-56" style="rounded=1;fillColor=#dcfce7;strokeColor=#15803d;fontColor=#111827;whiteSpace=wrap;html=1;" value="Rate Limiting Tool (Credit Bureau 100 calls/min)" vertex="1">
+          <mxGeometry height="472" width="320" x="320" y="22" as="geometry" />
+        </mxCell>
+        <mxCell id="EXUIBqwDPfPqHuMSUPsM-59" parent="EXUIBqwDPfPqHuMSUPsM-56" style="rounded=1;fillColor=#dcfce7;strokeColor=#15803d;fontColor=#111827;whiteSpace=wrap;html=1;" value="Policy / Confluence Tools" vertex="1">
+          <mxGeometry height="472" width="320" x="640" y="22" as="geometry" />
+        </mxCell>
+        <mxCell id="EXUIBqwDPfPqHuMSUPsM-60" parent="EXUIBqwDPfPqHuMSUPsM-56" style="rounded=1;fillColor=#dcfce7;strokeColor=#15803d;fontColor=#111827;whiteSpace=wrap;html=1;" value="Risk Model &amp; Historical Decisions Tools" vertex="1">
+          <mxGeometry height="472" width="320" x="960" y="22" as="geometry" />
+        </mxCell>
+        <mxCell id="EXUIBqwDPfPqHuMSUPsM-61" parent="1" style="swimlane;startSize=24;horizontal=1;childLayout=stackLayout;collapsible=0;fontStyle=1;rounded=1;strokeColor=#111827;fillColor=#e5e7eb;" value="External Systems &amp; Data Sources" vertex="1">
+          <mxGeometry height="520" width="3330" x="1200" y="180" as="geometry" />
+        </mxCell>
+        <mxCell id="EXUIBqwDPfPqHuMSUPsM-62" parent="EXUIBqwDPfPqHuMSUPsM-61" style="swimlane;startSize=20;horizontal=1;childLayout=stackLayout;collapsible=0;fontStyle=1;rounded=1;strokeColor=#0f766e;fillColor=#ccfbf1;" value="Risk &amp; Data APIs" vertex="1">
+          <mxGeometry height="496" width="1480" y="24" as="geometry" />
+        </mxCell>
+        <mxCell id="EXUIBqwDPfPqHuMSUPsM-63" parent="EXUIBqwDPfPqHuMSUPsM-62" style="rounded=1;fillColor=#a5f3fc;strokeColor=#0e7490;fontColor=#111827;whiteSpace=wrap;html=1;" value="Credit Bureau API" vertex="1">
+          <mxGeometry height="476" width="370" y="20" as="geometry" />
+        </mxCell>
+        <mxCell id="EXUIBqwDPfPqHuMSUPsM-64" parent="EXUIBqwDPfPqHuMSUPsM-62" style="rounded=1;fillColor=#a5f3fc;strokeColor=#0e7490;fontColor=#111827;whiteSpace=wrap;html=1;" value="Fraud Detection API" vertex="1">
+          <mxGeometry height="476" width="370" x="370" y="20" as="geometry" />
+        </mxCell>
+        <mxCell id="EXUIBqwDPfPqHuMSUPsM-65" parent="EXUIBqwDPfPqHuMSUPsM-62" style="rounded=1;fillColor=#a5f3fc;strokeColor=#0e7490;fontColor=#111827;whiteSpace=wrap;html=1;" value="Employment Verification API (async)" vertex="1">
+          <mxGeometry height="476" width="370" x="740" y="20" as="geometry" />
+        </mxCell>
+        <mxCell id="EXUIBqwDPfPqHuMSUPsM-66" parent="EXUIBqwDPfPqHuMSUPsM-62" style="rounded=1;fillColor=#a5f3fc;strokeColor=#0e7490;fontColor=#111827;whiteSpace=wrap;html=1;" value="Bank Statement Analysis API" vertex="1">
+          <mxGeometry height="476" width="370" x="1110" y="20" as="geometry" />
+        </mxCell>
+        <mxCell id="EXUIBqwDPfPqHuMSUPsM-67" parent="EXUIBqwDPfPqHuMSUPsM-61" style="swimlane;startSize=20;horizontal=1;childLayout=stackLayout;collapsible=0;fontStyle=1;rounded=1;strokeColor=#7c2d12;fillColor=#ffedd5;" value="Internal Services" vertex="1">
+          <mxGeometry height="496" width="1850" x="1480" y="24" as="geometry" />
+        </mxCell>
+        <mxCell id="EXUIBqwDPfPqHuMSUPsM-68" parent="EXUIBqwDPfPqHuMSUPsM-67" style="rounded=1;fillColor=#fed7aa;strokeColor=#c2410c;fontColor=#111827;whiteSpace=wrap;html=1;" value="Risk Scoring Model Service" vertex="1">
+          <mxGeometry height="476" width="370" y="20" as="geometry" />
+        </mxCell>
+        <mxCell id="EXUIBqwDPfPqHuMSUPsM-69" parent="EXUIBqwDPfPqHuMSUPsM-67" style="rounded=1;fillColor=#fed7aa;strokeColor=#c2410c;fontColor=#111827;whiteSpace=wrap;html=1;" value="Historical Decisions Database" vertex="1">
+          <mxGeometry height="476" width="370" x="370" y="20" as="geometry" />
+        </mxCell>
+        <mxCell id="EXUIBqwDPfPqHuMSUPsM-70" parent="EXUIBqwDPfPqHuMSUPsM-67" style="rounded=1;fillColor=#fed7aa;strokeColor=#c2410c;fontColor=#111827;whiteSpace=wrap;html=1;" value="Policy Repository (Confluence + Index)" vertex="1">
+          <mxGeometry height="476" width="370" x="740" y="20" as="geometry" />
+        </mxCell>
+        <mxCell id="EXUIBqwDPfPqHuMSUPsM-71" parent="EXUIBqwDPfPqHuMSUPsM-67" style="rounded=1;fillColor=#fed7aa;strokeColor=#c2410c;fontColor=#111827;whiteSpace=wrap;html=1;" value="Case Management / Underwriter Workbench" vertex="1">
+          <mxGeometry height="476" width="370" x="1110" y="20" as="geometry" />
+        </mxCell>
+        <mxCell id="EXUIBqwDPfPqHuMSUPsM-72" parent="EXUIBqwDPfPqHuMSUPsM-67" style="rounded=1;fillColor=#fee2e2;strokeColor=#b91c1c;fontColor=#111827;whiteSpace=wrap;html=1;fontStyle=1;" value="Tokenization / PII Vault (PCI Zone)" vertex="1">
+          <mxGeometry height="476" width="370" x="1480" y="20" as="geometry" />
+        </mxCell>
+        <mxCell id="EXUIBqwDPfPqHuMSUPsM-73" parent="1" style="swimlane;startSize=24;horizontal=1;childLayout=stackLayout;collapsible=0;fontStyle=1;rounded=1;strokeColor=#111827;fillColor=#e5e7eb;" value="Security, Governance &amp; Observability" vertex="1">
+          <mxGeometry height="180" width="1590" x="30" y="720" as="geometry" />
+        </mxCell>
+        <mxCell id="EXUIBqwDPfPqHuMSUPsM-74" parent="EXUIBqwDPfPqHuMSUPsM-73" style="rounded=1;fillColor=#fef2f2;strokeColor=#b91c1c;fontColor=#111827;whiteSpace=wrap;html=1;" value="Security: WAF/API Gateway, IAM, Network Segmentation, PCI-DSS Controls" vertex="1">
+          <mxGeometry height="156" width="500" y="24" as="geometry" />
+        </mxCell>
+        <mxCell id="EXUIBqwDPfPqHuMSUPsM-75" parent="EXUIBqwDPfPqHuMSUPsM-73" style="rounded=1;fillColor=#ecfdf5;strokeColor=#15803d;fontColor=#111827;whiteSpace=wrap;html=1;" value="Audit &amp; Compliance: Append-only Decision Log, Model &amp; Policy Versions, Change Management" vertex="1">
+          <mxGeometry height="156" width="500" x="500" y="24" as="geometry" />
+        </mxCell>
+        <mxCell id="EXUIBqwDPfPqHuMSUPsM-76" parent="EXUIBqwDPfPqHuMSUPsM-73" style="rounded=1;fillColor=#eff6ff;strokeColor=#1d4ed8;fontColor=#111827;whiteSpace=wrap;html=1;" value="Observability: Metrics, Traces, Alerts (Latency, Errors, Auto-decision %, Overrides, Drift)" vertex="1">
+          <mxGeometry height="156" width="500" x="1000" y="24" as="geometry" />
+        </mxCell>
+        <mxCell id="EXUIBqwDPfPqHuMSUPsM-77" edge="1" parent="1" source="EXUIBqwDPfPqHuMSUPsM-37" style="endArrow=block;strokeColor=#111827;" target="EXUIBqwDPfPqHuMSUPsM-39">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="EXUIBqwDPfPqHuMSUPsM-78" edge="1" parent="1" source="EXUIBqwDPfPqHuMSUPsM-38" style="endArrow=block;strokeColor=#111827;" target="EXUIBqwDPfPqHuMSUPsM-39">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="EXUIBqwDPfPqHuMSUPsM-79" edge="1" parent="1" source="EXUIBqwDPfPqHuMSUPsM-39" style="endArrow=block;strokeColor=#111827;fontSize=11;labelBackgroundColor=#ffffff;" target="EXUIBqwDPfPqHuMSUPsM-42" value="Loan application (tokens + features)">
+          <mxGeometry relative="1" as="geometry">
+            <mxPoint as="offset" />
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="EXUIBqwDPfPqHuMSUPsM-80" edge="1" parent="1" source="EXUIBqwDPfPqHuMSUPsM-42" style="endArrow=block;strokeColor=#111827;" target="EXUIBqwDPfPqHuMSUPsM-45">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="EXUIBqwDPfPqHuMSUPsM-81" edge="1" parent="1" source="EXUIBqwDPfPqHuMSUPsM-45" style="endArrow=block;dashed=1;strokeColor=#6b7280;fontSize=10;" target="EXUIBqwDPfPqHuMSUPsM-47">
+          <mxGeometry relative="1" as="geometry">
+            <mxPoint as="offset" />
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="EXUIBqwDPfPqHuMSUPsM-82" edge="1" parent="1" source="EXUIBqwDPfPqHuMSUPsM-45" style="endArrow=block;dashed=1;strokeColor=#6b7280;fontSize=10;" target="EXUIBqwDPfPqHuMSUPsM-48">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="EXUIBqwDPfPqHuMSUPsM-83" edge="1" parent="1" source="EXUIBqwDPfPqHuMSUPsM-45" style="endArrow=block;dashed=1;strokeColor=#6b7280;fontSize=10;" target="EXUIBqwDPfPqHuMSUPsM-49">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="EXUIBqwDPfPqHuMSUPsM-84" edge="1" parent="1" source="EXUIBqwDPfPqHuMSUPsM-45" style="endArrow=block;dashed=1;strokeColor=#6b7280;fontSize=10;" target="EXUIBqwDPfPqHuMSUPsM-50">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="EXUIBqwDPfPqHuMSUPsM-85" edge="1" parent="1" source="EXUIBqwDPfPqHuMSUPsM-45" style="endArrow=block;dashed=1;strokeColor=#6b7280;fontSize=10;" target="EXUIBqwDPfPqHuMSUPsM-51">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="EXUIBqwDPfPqHuMSUPsM-86" edge="1" parent="1" source="EXUIBqwDPfPqHuMSUPsM-45" style="endArrow=block;dashed=1;strokeColor=#6b7280;fontSize=10;" target="EXUIBqwDPfPqHuMSUPsM-52">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="EXUIBqwDPfPqHuMSUPsM-87" edge="1" parent="1" source="EXUIBqwDPfPqHuMSUPsM-44" style="endArrow=open;dashed=1;strokeColor=#6b7280;fontSize=10;" target="EXUIBqwDPfPqHuMSUPsM-53" value="read/write per-application state">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="EXUIBqwDPfPqHuMSUPsM-88" edge="1" parent="1" source="EXUIBqwDPfPqHuMSUPsM-56" style="endArrow=block;strokeColor=#111827;fontSize=10;" target="EXUIBqwDPfPqHuMSUPsM-62" value="API calls via tools">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="EXUIBqwDPfPqHuMSUPsM-89" edge="1" parent="1" source="EXUIBqwDPfPqHuMSUPsM-56" style="endArrow=block;strokeColor=#111827;fontSize=10;" target="EXUIBqwDPfPqHuMSUPsM-67" value="Model, policy, history, case updates">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="EXUIBqwDPfPqHuMSUPsM-90" edge="1" parent="1" source="EXUIBqwDPfPqHuMSUPsM-40" style="endArrow=open;dashed=1;strokeColor=#6b7280;fontSize=10;" target="EXUIBqwDPfPqHuMSUPsM-73" value="audit logs, metrics, traces">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="EXUIBqwDPfPqHuMSUPsM-91" edge="1" parent="1" source="EXUIBqwDPfPqHuMSUPsM-36" style="endArrow=open;dashed=1;strokeColor=#6b7280;fontSize=10;" target="EXUIBqwDPfPqHuMSUPsM-73">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="EXUIBqwDPfPqHuMSUPsM-92" edge="1" parent="1" source="EXUIBqwDPfPqHuMSUPsM-53" style="endArrow=open;dashed=1;strokeColor=#b91c1c;fontSize=10;" target="EXUIBqwDPfPqHuMSUPsM-72" value="tokens only">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+      </root>
+    </mxGraphModel>
+  </diagram>
+</mxfile>
