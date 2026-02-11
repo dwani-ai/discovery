@@ -2,6 +2,9 @@ Discovery - Agentic Intelligence Platform
 
 Try Demo :  [https://app.dwani.ai](https://app.dwani.ai)
 
+
+[Agents Presentation](https://docs.google.com/presentation/d/e/2PACX-1vQnIJbTjX_2v9B5QmboQCv61FFCcnK7Wz0MMujsW3G_szlBNhtpVy-hH6Ao-jg5psjOYiHzYoqsT22g/pub?start=false&loop=false&delayms=3000)
+
 - How to setup Discovery 
     - for server
         - [README.md](backend/README.md)
