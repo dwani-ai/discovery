@@ -4,7 +4,7 @@ from pathlib import Path
 class Settings:
     BASE_DIR = Path(__file__).resolve().parent.parent
 
-    DWANI_API_BASE_URL = os.getenv("DWANI_API_BASE_URL", "https://gemma4-api.dwani.ai/v1")
+    DWANI_API_BASE_URL = os.getenv("DWANI_API_BASE_URL")
     if not DWANI_API_BASE_URL:
         raise RuntimeError("DWANI_API_BASE_URL environment variable is required.")
     DWANI_LLM_MODEL = os.getenv("DWANI_LLM_MODEL", "gemma4")

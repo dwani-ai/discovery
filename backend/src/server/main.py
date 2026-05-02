@@ -54,7 +54,7 @@ logging.config.dictConfig({
 
 logger = logging.getLogger("dwani_server")
 
-DWANI_API_BASE_URL = os.getenv("DWANI_API_BASE_URL", "https://gemma4-api.dwani.ai/v1")
+DWANI_API_BASE_URL = os.getenv("DWANI_API_BASE_URL")
 
 DWANI_API_BASE_URL_LLM = os.getenv("DWANI_API_BASE_URL_LLM", DWANI_API_BASE_URL)
 DWANI_LLM_MODEL = os.getenv("DWANI_LLM_MODEL", "gemma4")
@@ -76,8 +76,8 @@ if not os.path.exists(FONT_PATH):
 
 # ========================= TOKEN LIMITS (ENV CONFIGURABLE) =========================
 
-MAX_CONTEXT_TOKENS = int(os.getenv("MAX_CONTEXT_TOKENS", "12000"))
-MAX_HISTORY_TOKENS = int(os.getenv("MAX_HISTORY_TOKENS", "3000"))
+MAX_CONTEXT_TOKENS = int(os.getenv("MAX_CONTEXT_TOKENS", "6000"))
+MAX_HISTORY_TOKENS = int(os.getenv("MAX_HISTORY_TOKENS", "1000"))
 
 logger.info(f"Context limits: MAX_CONTEXT_TOKENS={MAX_CONTEXT_TOKENS}, MAX_HISTORY_TOKENS={MAX_HISTORY_TOKENS}")
 
