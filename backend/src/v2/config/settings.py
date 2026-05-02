@@ -7,6 +7,8 @@ class Settings:
     DWANI_API_BASE_URL = os.getenv("DWANI_API_BASE_URL")
     if not DWANI_API_BASE_URL:
         raise RuntimeError("DWANI_API_BASE_URL environment variable is required.")
+    DWANI_LLM_MODEL = os.getenv("DWANI_LLM_MODEL", "gemma4")
+    DWANI_EMBEDDING_MODEL = os.getenv("DWANI_EMBEDDING_MODEL", "google/embeddinggemma-300m")
 
     FONT_PATH = BASE_DIR / "fonts" / "DejaVuSans.ttf"
 

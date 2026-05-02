@@ -1,4 +1,7 @@
+from PIL import Image
+
 from client.openai_client import get_openai_client
+from config.settings import settings
 from utils.image import encode_image, pdf_to_images
 
 async def extract_text_from_images_per_page(images: list[Image.Image]) -> list[str]:
@@ -19,7 +22,7 @@ async def extract_text_from_images_per_page(images: list[Image.Image]) -> list[s
         ]
 
         response = await client.chat.completions.create(
-            model="gemma3",
+            model=settings.DWANI_LLM_MODEL,
             messages=messages,
             temperature=0.2,
             max_tokens=2048,

@@ -1,13 +1,13 @@
 ### Implemented Features (Current State of dwani.ai)
 
 #### Core Document Processing
-- **Multimodal OCR**: Page-by-page image-to-text extraction using vision model (gemma3)
+- **Multimodal OCR**: Page-by-page image-to-text extraction using vision model (gemma4)
 - **Privacy-first**: All processing happens server-side with no external storage
 - **Clean PDF regeneration**: Text-only regenerated PDFs using extracted content
 - **Merged clean PDFs**: Combine multiple documents into one clean version
 
 #### Advanced RAG System
-- **High-quality embeddings**: Using `BAAI/bge-small-en-v1.5` (top-tier small embedding model)
+- **High-quality embeddings**: Using `google/embeddinggemma-300m` (top-tier small embedding model)
 - **Page-level chunking & metadata**: Chunks preserve original page ranges
 - **Page-level citations**: Sources show exact "Page X" or "Pages X–Y" references
 - **Clickable page links**: Citations link directly to `#page=X` in regenerated PDF (opens at correct page)
@@ -61,7 +61,7 @@
 - Share document sets or chat sessions via link
 
 #### 8. Performance & Accuracy Boosts
-- Optional larger embedding model (`bge-large-en-v1.5`)
+- Optional larger embedding model or higher-dimensional Matryoshka setting
 - Re-ranking step (e.g., using cohere-rerank or cross-encoder)
 - Post-processing to merge adjacent chunks
 

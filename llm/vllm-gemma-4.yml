@@ -1,0 +1,43 @@
+services:
+  vllm-server:
+    image: dwani/vllm-gemma4-audio
+    container_name: gemma4-vllm-server-1
+    # CRITICAL: L4 GPUs need shared memory for Triton/NCCL kernels to initialize without hanging.
+    shm_size: '4gb'
+    environment:
+      - PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True
+      # Use your shell's HF_TOKEN or replace ${HF_TOKEN} with your actual key
+      - HF_TOKEN=${HF_TOKEN}
+      # Required for some nightly builds to avoid library pathing issues
+      - LD_LIBRARY_PATH=/usr/local/nvidia/lib:/usr/local/nvidia/lib64
+    ports:
+      - "80:10802"
+    volumes:
+      # Mount a local cache so you don't re-download 15GB+ every time you restart
+      - ~/.cache/huggingface:/root/.cache/huggingface
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu]
+    restart: unless-stopped
+    command: >
+      --model google/gemma-4-E2B-it
+      --served-model-name gemma4
+      --host 0.0.0.0
+      --port 10802
+      --trust-remote-code
+      --enforce-eager
+      --gpu-memory-utilization 0.85
+      --max-model-len 8192
+      --max-num-seqs 16
+      --enable-chunked-prefill
+      --enable-prefix-caching
+      --chat-template-content-format openai
+      --tool-call-parser gemma4
+      --reasoning-parser gemma4
+      --enable-auto-tool-choice
+      --limit-mm-per-prompt '{"image":2,"video":1,"audio":1}'
+      --default-chat-template-kwargs '{"enable_thinking": false}'

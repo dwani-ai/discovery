@@ -15,16 +15,10 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     && apt-get clean \
     && rm -rf /var/lib/apt/lists/*
 
-
-RUN pip install --no-cache-dir --prefix=/install \
-    --index-url https://download.pytorch.org/whl/cpu \
-    --no-deps \
-    torch==2.9.1+cpu torchvision==0.24.1+cpu torchaudio==2.9.1+cpu
-
 COPY requirements.txt .
 
-# Then install everything else normally
-RUN pip install --no-deps --no-cache-dir --prefix=/install --ignore-installed -r requirements.txt
+# Install dependencies with PyPI as the primary index and PyTorch CPU wheels as an extra index.
+RUN pip install --no-cache-dir --prefix=/install -r requirements.txt
 
 # ============================
 # Stage 2: Runtime

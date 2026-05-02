@@ -1219,10 +1219,23 @@ export default function Digitiser() {
         </Dialog>
 
         {/* Chat Dialog */}
-        <Dialog open={chatOpen} onClose={closeChat} maxWidth="md" fullWidth>
-          <DialogTitle>
+        <Dialog
+          open={chatOpen}
+          onClose={closeChat}
+          maxWidth="md"
+          fullWidth
+          PaperProps={{
+            sx: {
+              bgcolor: '#111827',
+              color: '#f8fafc',
+              borderRadius: 3,
+              boxShadow: '0 24px 80px rgba(0, 0, 0, 0.45)',
+            },
+          }}
+        >
+          <DialogTitle sx={{ pb: 1 }}>
             <Stack direction="row" justifyContent="space-between" alignItems="center">
-              <Typography variant="h6">
+              <Typography variant="h6" sx={{ fontWeight: 700 }}>
                 {currentConvId === GLOBAL_CHAT_ID
                   ? `Global Search • ${activeFilenames.length} documents`
                   : activeFilenames.length === 1
@@ -1234,37 +1247,99 @@ export default function Digitiser() {
                 onClick={() => setClearChatDialogOpen(true)}
                 variant="outlined"
                 size="small"
+                sx={{
+                  color: '#f8fafc',
+                  borderColor: 'rgba(248, 250, 252, 0.28)',
+                  bgcolor: 'rgba(15, 23, 42, 0.85)',
+                  '&:hover': {
+                    borderColor: 'rgba(248, 250, 252, 0.5)',
+                    bgcolor: 'rgba(30, 41, 59, 0.95)',
+                  },
+                }}
               >
                 Clear
               </Button>
             </Stack>
           </DialogTitle>
-          <DialogContent dividers sx={{ height: '70vh', display: 'flex', flexDirection: 'column' }}>
-            <Box flex={1} overflow="auto" p={2} component={Paper} variant="outlined">
-              <List>
+          <DialogContent
+            dividers
+            sx={{
+              height: '70vh',
+              display: 'flex',
+              flexDirection: 'column',
+              borderColor: 'rgba(148, 163, 184, 0.2)',
+            }}
+          >
+            <Box
+              flex={1}
+              overflow="auto"
+              p={{ xs: 1.5, sm: 2 }}
+              component={Paper}
+              variant="outlined"
+              sx={{
+                bgcolor: '#020617',
+                borderColor: 'rgba(148, 163, 184, 0.18)',
+                borderRadius: 2,
+              }}
+            >
+              <List sx={{ py: 0 }}>
                 {chatHistory.map((msg, i) => (
-                  <ListItem key={i} alignItems="flex-start">
+                  <ListItem
+                    key={i}
+                    alignItems="flex-start"
+                    sx={{
+                      px: 0,
+                      justifyContent: msg.role === 'user' ? 'flex-end' : 'flex-start',
+                    }}
+                  >
                     <Paper
                       sx={{
                         p: 2,
-                        maxWidth: '80%',
-                        bgcolor: msg.role === 'user' ? 'primary.light' : 'grey.100',
-                        color: msg.role === 'user' ? 'white' : 'inherit',
+                        maxWidth: { xs: '92%', sm: '82%' },
+                        bgcolor: msg.role === 'user' ? '#2563eb' : '#f8fafc',
+                        color: msg.role === 'user' ? '#ffffff' : '#0f172a',
+                        borderRadius: 3,
+                        borderTopRightRadius: msg.role === 'user' ? 6 : 24,
+                        borderTopLeftRadius: msg.role === 'user' ? 24 : 6,
+                        boxShadow: '0 10px 30px rgba(15, 23, 42, 0.24)',
                       }}
                     >
-                      <Typography variant="subtitle2" gutterBottom>
+                      <Typography
+                        variant="subtitle2"
+                        gutterBottom
+                        sx={{
+                          color: msg.role === 'user' ? 'rgba(255,255,255,0.86)' : '#475569',
+                          fontWeight: 700,
+                        }}
+                      >
                         {msg.role === 'user' ? 'You' : 'Assistant'}
                       </Typography>
-                      <Typography whiteSpace="pre-wrap">{msg.content || 'Thinking...'}</Typography>
+                      <Typography whiteSpace="pre-wrap" sx={{ lineHeight: 1.65 }}>
+                        {msg.content || 'Thinking...'}
+                      </Typography>
 
                       {msg.sources && msg.sources.length > 0 && (
-                        <Accordion sx={{ mt: 2 }}>
-                          <AccordionSummary expandIcon={<ExpandMoreIcon />}>
-                            <Typography variant="caption" fontWeight="medium">
+                        <Accordion
+                          disableGutters
+                          sx={{
+                            mt: 2,
+                            overflow: 'hidden',
+                            bgcolor: '#0f172a',
+                            color: '#e2e8f0',
+                            border: '1px solid rgba(148, 163, 184, 0.25)',
+                            boxShadow: 'none',
+                            '&:before': { display: 'none' },
+                          }}
+                        >
+                          <AccordionSummary
+                            expandIcon={<ExpandMoreIcon sx={{ color: '#cbd5e1' }} />}
+                            sx={{ minHeight: 44 }}
+                          >
+                            <Typography variant="caption" fontWeight={700}>
                               Sources ({msg.sources.length})
                             </Typography>
                           </AccordionSummary>
-                          <AccordionDetails>
+                          <AccordionDetails sx={{ pt: 0 }}>
                             <Stack spacing={2}>
                               {msg.sources.map((source, idx) => {
                                 const fileRecord = allFiles.find(
@@ -1280,14 +1355,21 @@ export default function Digitiser() {
 
                                 return (
                                   <Box key={idx}>
-                                    <Typography variant="caption" gutterBottom>
+                                    <Typography
+                                      variant="caption"
+                                      gutterBottom
+                                      sx={{
+                                        display: 'block',
+                                        color: '#cbd5e1',
+                                      }}
+                                    >
                                       {pdfUrl ? (
                                         <a
                                           href={pdfUrl}
                                           target="_blank"
                                           rel="noopener noreferrer"
                                           style={{
-                                            color: '#1976d2',
+                                            color: '#60a5fa',
                                             textDecoration: 'underline',
                                             fontWeight: 'bold',
                                           }}
@@ -1299,11 +1381,28 @@ export default function Digitiser() {
                                           {source.filename} — {source.page || 'Unknown page'}
                                         </strong>
                                       )}{' '}
-                                      <span style={{ color: '#666' }}>
+                                      <span style={{ color: '#94a3b8' }}>
                                         (relevance: {source.relevance_score.toFixed(2)})
                                       </span>
                                     </Typography>
-                                    <Paper variant="outlined" sx={{ p: 1.5, mt: 0.5, bgcolor: 'grey.50' }}>
+                                    <Paper
+                                      variant="outlined"
+                                      sx={{
+                                        p: 1.5,
+                                        mt: 0.5,
+                                        bgcolor: '#f8fafc',
+                                        color: '#0f172a',
+                                        borderColor: '#cbd5e1',
+                                        borderRadius: 2,
+                                        lineHeight: 1.6,
+                                        '& .source-highlight': {
+                                          bgcolor: '#fef08a',
+                                          color: '#713f12',
+                                          borderRadius: 0.5,
+                                          px: 0.25,
+                                        },
+                                      }}
+                                    >
                                       <Highlight
                                         highlightClassName="source-highlight"
                                         searchWords={userMessage.split(' ').filter(w => w.length > 3)}
@@ -1322,8 +1421,8 @@ export default function Digitiser() {
                   </ListItem>
                 ))}
                 {chatLoading && (
-                  <ListItem>
-                    <CircularProgress size={24} />
+                  <ListItem sx={{ color: '#cbd5e1' }}>
+                    <CircularProgress size={24} sx={{ color: '#60a5fa' }} />
                     <Typography sx={{ ml: 2 }}>Searching and thinking...</Typography>
                   </ListItem>
                 )}
@@ -1352,6 +1451,20 @@ export default function Digitiser() {
                   }
                 }}
                 disabled={chatLoading}
+                sx={{
+                  '& .MuiOutlinedInput-root': {
+                    bgcolor: '#020617',
+                    color: '#f8fafc',
+                    borderRadius: 2,
+                    '& fieldset': { borderColor: 'rgba(148, 163, 184, 0.28)' },
+                    '&:hover fieldset': { borderColor: 'rgba(148, 163, 184, 0.5)' },
+                    '&.Mui-focused fieldset': { borderColor: '#60a5fa' },
+                  },
+                  '& .MuiInputBase-input::placeholder': {
+                    color: '#94a3b8',
+                    opacity: 1,
+                  },
+                }}
               />
               <Button
                 variant="contained"
@@ -1360,14 +1473,26 @@ export default function Digitiser() {
                   setUserMessage('');
                 }}
                 disabled={chatLoading || !userMessage.trim()}
-                sx={{ height: 56 }}
+                sx={{
+                  height: 56,
+                  minWidth: 64,
+                  borderRadius: 2,
+                }}
               >
                 <SendIcon />
               </Button>
             </Stack>
           </DialogContent>
-          <DialogActions>
-            <Button onClick={closeChat}>Close</Button>
+          <DialogActions sx={{ px: 3, py: 2 }}>
+            <Button
+              onClick={closeChat}
+              sx={{
+                color: '#e2e8f0',
+                '&:hover': { bgcolor: 'rgba(148, 163, 184, 0.12)' },
+              }}
+            >
+              Close
+            </Button>
           </DialogActions>
         </Dialog>
 

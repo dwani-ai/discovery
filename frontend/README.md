@@ -19,13 +19,18 @@ npm run dev
 - docker 
     - Developer Environment
     ```bash
+        export HF_TOKEN="some_token"
+        
         docker build -t dwani/discovery-ux-dev:latest -f Dockerfile.dev .
 
         docker push dwani/discovery-ux-dev:latest
     ```
     - Production Environment
     ```bash
-        docker build -t dwani/discovery-ux-prod:latest -f Dockerfile.prod .
+        docker build \
+          --build-arg VITE_DWANI_API_BASE_URL=http://<server-host>:8000 \
+          -t dwani/discovery-ux-prod:latest \
+          -f Dockerfile.prod .
 
         docker push dwani/discovery-ux-prod:latest
     ```

@@ -79,7 +79,7 @@ Try Demo :  [https://app.dwani.ai](https://app.dwani.ai)
                 ▼                        ▼                             │
        ┌─────────────────────┐   ┌─────────────────────┐             │
        │ OCR per page        │   │ RRF Fusion          │             │
-       │ (gemma3 vision)     │   │ → top chunks        │             │
+       │ (gemma4 vision)     │   │ → top chunks        │             │
        └────────┬────────────┘   └────────┬────────────┘             │
                 │                        │                             │
                 ▼                        ▼                             │
@@ -91,7 +91,7 @@ Try Demo :  [https://app.dwani.ai](https://app.dwani.ai)
                 ▼                        ▼
        ┌─────────────────────┐   ┌─────────────────────┐
        │ Chunk + Embed       │   │ LLM generation      │
-       │   → ChromaDB        │   │ (gemma3 text-only)  │
+       │   → ChromaDB        │   │ (gemma4 text-only)  │
        └─────────────────────┘   └────────┬────────────┘
                                            │
                                            ▼
@@ -117,7 +117,7 @@ Background Task
    ↓
 pdf2image → list of PIL Images
    ↓ (parallel / sequential)
-gemma3-vision OCR per page
+gemma4 vision OCR per page
    ↓
 page_texts: List[str]
    ├─→ SQLite (FileRecord.extracted_text)
@@ -134,7 +134,7 @@ page_texts: List[str]
 User question + file_ids
    ↓
 Hybrid search:
-   ├─→ Chroma vector search (bge-small-en-v1.5)
+   ├─→ Chroma vector search (google/embeddinggemma-300m)
    └─→ BM25 on top-20 vector results
         ↓
 Reciprocal Rank Fusion (RRF)
@@ -145,7 +145,7 @@ Context building (greedy token limit)
         ↓
 System prompt + history (trimmed) + context
         ↓
-gemma3 (text-only)
+gemma4 (text-only)
         ↓
 Answer + Sources list + optional Contradiction warning
 ```

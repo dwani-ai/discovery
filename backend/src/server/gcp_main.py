@@ -163,7 +163,7 @@ async def background_extraction_task(file_id: str, gcs_uri: str, filename: str, 
     db.commit()
 
     try:
-        # 1. Document AI OCR (replaces pdf2image + gemma3 vision)
+        # 1. Document AI OCR (replaces pdf2image + gemma4 vision)
         full_text = process_document_ocr(gcs_uri)
         record.extracted_text = full_text
         db.commit()
