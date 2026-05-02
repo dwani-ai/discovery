@@ -23,7 +23,7 @@ services:
     container_name: discovery-ux
     ports:
       - "5173:5173"       # Vite dev server default port
-      - "3000:3000"       # Optional: if you use another port
+      - "80:3000"       # Optional: if you use another port
     environment:
       - VITE_DWANI_API_KEY=asdasd  # Pass your API key
       - VITE_DWANI_API_BASE_URL=http://localhost:8000
