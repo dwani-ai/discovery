@@ -5,7 +5,7 @@ services:
     ports:
       - "8000:18888"  # Expose FastAPI server port (adjust if needed)
     environment:
-      - DWANI_API_BASE_URL=https://gemma4-api.dwani.ai/v1
+      - DWANI_API_BASE_URL=https://
       - DWANI_LLM_MODEL=gemma4
       - DWANI_EMBEDDING_MODEL=google/embeddinggemma-300m
     networks:
