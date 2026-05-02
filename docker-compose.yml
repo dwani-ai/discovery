@@ -17,17 +17,14 @@ services:
     extra_hosts:
       - "host.docker.internal:host-gateway"  # Allows access to host's localhost
     restart: unless-stopped
-  # Development server (hot reload)
   discovery-ux:
-    image: dwani/discovery-ux-dev:latest  # Replace with your FastAPI Docker image
+    image: dwani/discovery-ux-prod:latest
     container_name: discovery-ux
     ports:
-      - "5173:5173"       # Vite dev server default port
-      - "80:3000"       # Optional: if you use another port
-    environment:
-      - VITE_DWANI_API_KEY=asdasd  # Pass your API key
-      - VITE_DWANI_API_BASE_URL=http://localhost:8000
-    command: npm run dev -- --host 0.0.0.0
+      - "80:80"
+    networks:
+      - app-network
+    restart: unless-stopped
 
 networks:
   app-network:

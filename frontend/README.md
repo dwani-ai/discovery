@@ -27,7 +27,10 @@ npm run dev
     ```
     - Production Environment
     ```bash
-        docker build -t dwani/discovery-ux-prod:latest -f Dockerfile.prod .
+        docker build \
+          --build-arg VITE_DWANI_API_BASE_URL=http://<server-host>:8000 \
+          -t dwani/discovery-ux-prod:latest \
+          -f Dockerfile.prod .
 
         docker push dwani/discovery-ux-prod:latest
     ```

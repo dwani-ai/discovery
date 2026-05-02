@@ -1,14 +1,13 @@
-version: '3.9'
-
 services:
-
   # Production server (served via Nginx)
-  prod:
+  discovery-ux:
+    image: dwani/discovery-ux-prod:latest
     build:
       context: .
+      dockerfile: Dockerfile.prod
       target: production
+      args:
+        VITE_DWANI_API_BASE_URL: ${VITE_DWANI_API_BASE_URL:?Set VITE_DWANI_API_BASE_URL}
     ports:
       - "80:80"
-    environment:
-      - VITE_DWANI_API_KEY=${VITE_DWANI_API_KEY}
     restart: unless-stopped

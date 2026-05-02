@@ -13,6 +13,10 @@ RUN npm ci
 # Copy source code
 COPY . .
 
+# Vite reads these at build time and embeds them in the static bundle.
+ARG VITE_DWANI_API_BASE_URL
+ENV VITE_DWANI_API_BASE_URL=$VITE_DWANI_API_BASE_URL
+
 # Build the app for production
 RUN npm run build
 
