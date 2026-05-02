@@ -14,7 +14,6 @@ from typing import List, Optional, Dict, Tuple
 
 import chromadb
 import dwani
-from chromadb.utils import embedding_functions
 from fastapi import FastAPI, UploadFile, HTTPException, BackgroundTasks, Depends, Body
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse, FileResponse
@@ -30,6 +29,7 @@ from sqlalchemy.orm import sessionmaker, Session
 import unicodedata
 
 import uvicorn
+from sentence_transformers import SentenceTransformer
 
 # ========================= CONFIG & LOGGING =========================
 
@@ -54,9 +54,11 @@ logging.config.dictConfig({
 
 logger = logging.getLogger("dwani_server")
 
-DWANI_API_BASE_URL = os.getenv("DWANI_API_BASE_URL")
+DWANI_API_BASE_URL = os.getenv("DWANI_API_BASE_URL", "https://gemma4-api.dwani.ai/v1")
 
-DWANI_API_BASE_URL_LLM = os.getenv("DWANI_API_BASE_URL_LLM")
+DWANI_API_BASE_URL_LLM = os.getenv("DWANI_API_BASE_URL_LLM", DWANI_API_BASE_URL)
+DWANI_LLM_MODEL = os.getenv("DWANI_LLM_MODEL", "gemma4")
+DWANI_EMBEDDING_MODEL = os.getenv("DWANI_EMBEDDING_MODEL", "google/embeddinggemma-300m")
 
 if not DWANI_API_BASE_URL:
     raise RuntimeError("DWANI_API_BASE_URL environment variable is required.")
@@ -167,9 +169,18 @@ def get_db():
 chroma_client = chromadb.PersistentClient(path="./chroma_db")
 collection = chroma_client.get_or_create_collection(name="documents")
 
-embedding_function = embedding_functions.SentenceTransformerEmbeddingFunction(
-    model_name="BAAI/bge-small-en-v1.5"
-)
+class EmbeddingGemmaFunction:
+    def __init__(self, model_name: str):
+        self.model = SentenceTransformer(model_name)
+
+    def embed_documents(self, documents: List[str]) -> List[List[float]]:
+        return self.model.encode_document(documents).tolist()
+
+    def embed_query(self, query: str) -> List[float]:
+        return self.model.encode_query(query).tolist()
+
+
+embedding_function = EmbeddingGemmaFunction(DWANI_EMBEDDING_MODEL)
 
 
 # ========================= SCHEMAS =========================
@@ -317,7 +328,7 @@ async def generate_podcast_script(
     pseudo_question = "Summarize the main points from these documents and structure them into an engaging conversation."
 
     vector_results = collection.query(
-        query_embeddings=embedding_function([pseudo_question]),
+        query_embeddings=[embedding_function.embed_query(pseudo_question)],
         n_results=40,
         where={"file_id": {"$in": file_ids}},
         include=["documents", "metadatas", "distances"],
@@ -367,7 +378,7 @@ Documents context:
 
     client = get_openai_client()
     response = await client.chat.completions.create(
-        model="gemma3",
+        model=DWANI_LLM_MODEL,
         messages=[{"role": "system", "content": system_prompt}],
         temperature=0.8,
         max_tokens=approx_tokens,
@@ -413,8 +424,9 @@ async def pdf_to_images(pdf_bytes: bytes) -> List[Image.Image]:
         raise HTTPException(status_code=500, detail="Failed to process PDF")
 
 
-def get_openai_client(model: str = "gemma3") -> AsyncOpenAI:
-    valid_models = {"gemma3", "gpt-oss"}
+def get_openai_client(model: str | None = None) -> AsyncOpenAI:
+    model = model or DWANI_LLM_MODEL
+    valid_models = {DWANI_LLM_MODEL, "gpt-oss"}
     if model not in valid_models:
         raise ValueError(f"Invalid model: {model}")
     
@@ -441,7 +453,7 @@ async def extract_text_from_images_per_page(images: List[Image.Image]) -> List[s
         ]
 
         response = await client.chat.completions.create(
-            model="gemma3",
+            model=DWANI_LLM_MODEL,
             messages=messages,
             temperature=0.2,
             max_tokens=2048,
@@ -474,7 +486,7 @@ async def store_embeddings_with_pages(file_id: str, filename: str, page_texts: L
     collection.delete(where={"file_id": file_id})
 
     collection.add(
-        embeddings=embedding_function(documents),
+        embeddings=embedding_function.embed_documents(documents),
         documents=documents,
         metadatas=metadatas,
         ids=chunk_ids,
@@ -614,7 +626,7 @@ Respond in one short paragraph."""
     try:
         client = get_openai_client()
         response = await client.chat.completions.create(
-            model="gemma3",
+            model=DWANI_LLM_MODEL,
             messages=[{"role": "user", "content": contradiction_prompt}],
             temperature=0.3,
             max_tokens=512,
@@ -926,7 +938,7 @@ async def chat_with_documents(request: MultiChatRequest, db: Session = Depends(g
 
     # === Hybrid Search ===
     vector_results = collection.query(
-        query_embeddings=embedding_function([question]),
+        query_embeddings=[embedding_function.embed_query(question)],
         n_results=20,
         where={"file_id": {"$in": request.file_ids}},
         include=["documents", "metadatas", "distances"],
@@ -1018,7 +1030,7 @@ Answer clearly and professionally."""
     try:
         client = get_openai_client()
         response = await client.chat.completions.create(
-            model="gemma3",
+            model=DWANI_LLM_MODEL,
             messages=full_messages,
             temperature=0.5,
             max_tokens=1024,

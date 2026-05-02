@@ -11,7 +11,6 @@ from io import BytesIO
 from typing import List, Optional, Dict, Tuple
 
 import chromadb
-from chromadb.utils import embedding_functions
 from fastapi import FastAPI, UploadFile, HTTPException, BackgroundTasks, Depends, Body
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
@@ -27,6 +26,7 @@ from sqlalchemy.orm import sessionmaker, Session
 import unicodedata
 
 import uvicorn
+from sentence_transformers import SentenceTransformer
 
 # ========================= CONFIG & LOGGING =========================
 
@@ -51,9 +51,11 @@ logging.config.dictConfig({
 
 logger = logging.getLogger("dwani_server")
 
-DWANI_API_BASE_URL = os.getenv("DWANI_API_BASE_URL")
+DWANI_API_BASE_URL = os.getenv("DWANI_API_BASE_URL", "https://gemma4-api.dwani.ai/v1")
 if not DWANI_API_BASE_URL:
     raise RuntimeError("DWANI_API_BASE_URL environment variable is required.")
+DWANI_LLM_MODEL = os.getenv("DWANI_LLM_MODEL", "gemma4")
+DWANI_EMBEDDING_MODEL = os.getenv("DWANI_EMBEDDING_MODEL", "google/embeddinggemma-300m")
 
 FONT_PATH = os.path.join(os.path.dirname(__file__), "fonts", "DejaVuSans.ttf")
 if not os.path.exists(FONT_PATH):
@@ -151,11 +153,11 @@ def get_db():
 def index_document_in_fts(
     file_id: str,
     filename: str,
+    db: Session,
     short_summary: str = "",
     document_type: str = "",
     counterpart: str = "",
     tags: str = "",
-    db: Session
 ):
     """Index document-level searchable content into FTS5"""
     # Build rich searchable text
@@ -183,9 +185,18 @@ def index_document_in_fts(
 chroma_client = chromadb.PersistentClient(path="./chroma_db")
 collection = chroma_client.get_or_create_collection(name="documents")
 
-embedding_function = embedding_functions.SentenceTransformerEmbeddingFunction(
-    model_name="BAAI/bge-small-en-v1.5"
-)
+class EmbeddingGemmaFunction:
+    def __init__(self, model_name: str):
+        self.model = SentenceTransformer(model_name)
+
+    def embed_documents(self, documents: List[str]) -> List[List[float]]:
+        return self.model.encode_document(documents).tolist()
+
+    def embed_query(self, query: str) -> List[float]:
+        return self.model.encode_query(query).tolist()
+
+
+embedding_function = EmbeddingGemmaFunction(DWANI_EMBEDDING_MODEL)
 
 
 # ========================= SCHEMAS =========================
@@ -280,8 +291,9 @@ async def pdf_to_images(pdf_bytes: bytes) -> List[Image.Image]:
         raise HTTPException(status_code=500, detail="Failed to process PDF")
 
 
-def get_openai_client(model: str = "gemma3") -> AsyncOpenAI:
-    valid_models = {"gemma3", "gpt-oss"}
+def get_openai_client(model: str | None = None) -> AsyncOpenAI:
+    model = model or DWANI_LLM_MODEL
+    valid_models = {DWANI_LLM_MODEL, "gpt-oss"}
     if model not in valid_models:
         raise ValueError(f"Invalid model: {model}")
     return AsyncOpenAI(api_key="http", base_url=DWANI_API_BASE_URL)
@@ -344,7 +356,7 @@ logger = logging.getLogger(__name__)
 async def llm_judge(
     prompt: str,
     client: AsyncOpenAI,
-    model: str = "gemma3",
+    model: str = DWANI_LLM_MODEL,
     temperature: float = 0.1,
     max_tokens: int = 350
 ) -> Optional[Dict]:
@@ -375,7 +387,7 @@ async def evaluate_rag_triad(
     contexts: List[str],
     answer: str,
     client: AsyncOpenAI,
-    model: str = "gemma3"
+    model: str = DWANI_LLM_MODEL
 ) -> Dict[str, Dict[str, float | str]]:
     """
     Evaluate RAG response using three reference-free metrics.
@@ -522,7 +534,7 @@ async def extract_text_from_images_per_page(images: List[Image.Image]) -> List[s
         ]
 
         response = await client.chat.completions.create(
-            model="gemma3",
+            model=DWANI_LLM_MODEL,
             messages=messages,
             temperature=0.2,
             max_tokens=2048,
@@ -555,7 +567,7 @@ async def store_embeddings_with_pages(file_id: str, filename: str, page_texts: L
     collection.delete(where={"file_id": file_id})
 
     collection.add(
-        embeddings=embedding_function(documents),
+        embeddings=embedding_function.embed_documents(documents),
         documents=documents,
         metadatas=metadatas,
         ids=chunk_ids,
@@ -665,7 +677,7 @@ Respond ONLY with valid JSON — no explanation, no markdown, no code fences.
 
 async def extract_metadata_with_llm(
     page_texts: list[str],
-    model: str = "gemma3",           # or "qwen2.5-7b-instruct", "phi-4-mini", etc.
+    model: str = DWANI_LLM_MODEL,
     max_pages_for_context: int = 4,
     max_chars: int = 12000
 ) -> dict:
@@ -828,8 +840,8 @@ from typing import List, Optional
 
 async def select_relevant_file_ids(
     question: str,
-    user_selected_file_ids: Optional[List[str]] = None,
     db: Session,
+    user_selected_file_ids: Optional[List[str]] = None,
     max_files: int = 7,
 ) -> List[str]:
     """
@@ -896,7 +908,7 @@ Respond in one short paragraph."""
     try:
         client = get_openai_client()
         response = await client.chat.completions.create(
-            model="gemma3",
+            model=DWANI_LLM_MODEL,
             messages=[{"role": "user", "content": contradiction_prompt}],
             temperature=0.3,
             max_tokens=512,
@@ -1049,8 +1061,8 @@ logger = logging.getLogger(__name__)
 
 async def select_relevant_file_ids(
     question: str,
-    user_selected_file_ids: Optional[List[str]] = None,
     db: Session,
+    user_selected_file_ids: Optional[List[str]] = None,
     max_files: int = 7,
 ) -> List[str]:
     """
@@ -1160,7 +1172,7 @@ async def chat_with_documents(
 
     # ── PASS 2: Hybrid retrieval only on selected candidates ────────────────
     vector_results = collection.query(
-        query_embeddings=embedding_function([question]),
+        query_embeddings=[embedding_function.embed_query(question)],
         n_results=40,                      # more generous now that files are filtered
         where={"file_id": {"$in": candidate_file_ids}},
         include=["documents", "metadatas", "distances"]
@@ -1261,7 +1273,7 @@ Context:
     client = get_openai_client()
     try:
         response = await client.chat.completions.create(
-            model="gemma3",
+            model=DWANI_LLM_MODEL,
             messages=full_messages,
             temperature=0.55,
             max_tokens=1400,
@@ -1294,7 +1306,7 @@ Context:
             contexts=context_parts,
             answer=answer,
             client=client,
-            model="gemma3"
+            model=DWANI_LLM_MODEL
         )
     except Exception as eval_err:
         logger.warning("RAG evaluation failed", exc_info=True)

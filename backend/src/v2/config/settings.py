@@ -4,9 +4,11 @@ from pathlib import Path
 class Settings:
     BASE_DIR = Path(__file__).resolve().parent.parent
 
-    DWANI_API_BASE_URL = os.getenv("DWANI_API_BASE_URL")
+    DWANI_API_BASE_URL = os.getenv("DWANI_API_BASE_URL", "https://gemma4-api.dwani.ai/v1")
     if not DWANI_API_BASE_URL:
         raise RuntimeError("DWANI_API_BASE_URL environment variable is required.")
+    DWANI_LLM_MODEL = os.getenv("DWANI_LLM_MODEL", "gemma4")
+    DWANI_EMBEDDING_MODEL = os.getenv("DWANI_EMBEDDING_MODEL", "google/embeddinggemma-300m")
 
     FONT_PATH = BASE_DIR / "fonts" / "DejaVuSans.ttf"
 

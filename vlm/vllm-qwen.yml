@@ -3,7 +3,7 @@ services:
     image: vllm/vllm-openai:latest
     command: [
       "--model", "Qwen/Qwen3-VL-8B-Instruct-FP8",
-      "--served-model-name", "gemma3",
+      "--served-model-name", "qwen3-vl",
       "--host", "0.0.0.0",
       "--port", "9000",
       "--gpu-memory-utilization", "0.9",

@@ -3,9 +3,9 @@
 
 | Original Component | GCP/Vertex AI Replacement |
 |--------------------|---------------------------|
-| **ChromaDB + bge-small embeddings** | Vertex AI Text Embeddings (text-embedding-004) + ChunkRecord table in AlloyDB/Cloud SQL |
+| **ChromaDB + EmbeddingGemma embeddings** | Vertex AI Text Embeddings (text-embedding-004) + ChunkRecord table in AlloyDB/Cloud SQL |
 | **pdf2image + OpenAI vision OCR** | Gemini 1.5 Flash multimodal (native PDF ingestion) |
-| **AsyncOpenAI chat (gemma3 proxy)** | Gemini 1.5 Pro via Vertex AI SDK |
+| **AsyncOpenAI chat (gemma4 proxy)** | Gemini 1.5 Pro via Vertex AI SDK |
 | **dwani Audio API (custom TTS)** | Google Cloud Text-to-Speech |
 | **SQLite** | Cloud SQL PostgreSQL with Cloud SQL Connector |
 | **Local file storage** | Cloud Storage (GCS) buckets |
