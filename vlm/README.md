@@ -1,3 +1,3 @@
 To run VLM
 
-docker compose -f vllm-qwen.yml
+docker compose -f vllm-gemma4.yml

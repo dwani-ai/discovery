@@ -8,6 +8,7 @@ services:
       - DWANI_API_BASE_URL=https://
       - DWANI_LLM_MODEL=gemma4
       - DWANI_EMBEDDING_MODEL=google/embeddinggemma-300m
+      - HF_TOKEN=${HF_TOKEN}
     networks:
       - app-network
     extra_hosts:

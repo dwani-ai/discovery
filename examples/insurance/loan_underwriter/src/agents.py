@@ -24,7 +24,7 @@ load_dotenv()
 # Model configuration (LiteLLM / proxy)
 # -----------------------------------------------------------------------------
 API_BASE_URL = os.environ.get("DWANI_API_BASE_URL", "http://localhost:8000/v1")
-MODEL_NAME = os.environ.get("DWANI_MODEL_NAME", "qwen3-coder")
+MODEL_NAME = os.environ.get("DWANI_MODEL_NAME", "gemma4")
 
 # LiteLLM connector for ADK agents
 # Note: If your proxy requires a key, set it via env var expected by your proxy/LiteLLM.

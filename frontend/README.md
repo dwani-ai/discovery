@@ -19,6 +19,8 @@ npm run dev
 - docker 
     - Developer Environment
     ```bash
+        export HF_TOKEN="some_token"
+        
         docker build -t dwani/discovery-ux-dev:latest -f Dockerfile.dev .
 
         docker push dwani/discovery-ux-dev:latest
