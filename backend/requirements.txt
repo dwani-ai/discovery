@@ -1,3 +1,5 @@
+--extra-index-url https://download.pytorch.org/whl/cpu
+
 annotated-doc==0.0.4
 annotated-types==0.7.0
 anyio==4.12.1
@@ -116,6 +118,7 @@ threadpoolctl==3.6.0
 tiktoken==0.12.0
 tokenizers==0.22.2
 tomli==2.4.0
+torch==2.9.1+cpu
 tqdm==4.67.1
 transformers==4.57.5
 typer==0.21.1
